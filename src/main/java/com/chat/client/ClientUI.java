@@ -20,7 +20,11 @@ import java.io.File;
 import java.nio.file.Files;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -31,6 +35,8 @@ public class ClientUI extends JFrame {
     private JTextField txtInput;
     private JList<String> userList;
     private DefaultListModel<String> listModel;
+    private JTextField txtSearch;
+    private final List<String> onlineUsers = new ArrayList<>();
     private String selectedUser = null;
     private JLabel chatHeaderLabel;
     private JLabel chatStatusLabel;
@@ -87,7 +93,7 @@ public class ClientUI extends JFrame {
 
         client = new ChatClient(ip, port, username, this);
         audioHandler = new AudioHandler(client);
-        videoHandler = new VideoHandler(client);
+        videoHandler = new VideoHandler(client, audioHandler);
 
         setLayout(new BorderLayout());
 
@@ -106,7 +112,7 @@ public class ClientUI extends JFrame {
         brandRow.setOpaque(false);
         brandRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
         JLabel brand = new JLabel("✦  Chatly");
-        brand.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        brand.setFont(new Font("Segoe UI Symbol", Font.BOLD, 24));
         brand.setForeground(UITheme.TEXT);
         JLabel menu = new JLabel("•••");
         menu.setFont(new Font("Segoe UI", Font.BOLD, 16));
@@ -136,7 +142,25 @@ public class ClientUI extends JFrame {
         profileText.add(profileState);
         profileCard.add(profileText, BorderLayout.CENTER);
         sidebarTop.add(profileCard);
-        sidebarTop.add(Box.createRigidArea(new Dimension(0, 22)));
+        sidebarTop.add(Box.createRigidArea(new Dimension(0, 16)));
+
+        txtSearch = new JTextField();
+        txtSearch.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        txtSearch.setBackground(UITheme.BACKGROUND);
+        txtSearch.setForeground(UITheme.TEXT);
+        txtSearch.setBorder(new EmptyBorder(10, 14, 10, 14));
+        txtSearch.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+        txtSearch.putClientProperty("JTextField.placeholderText", "Search conversations...");
+        txtSearch.putClientProperty("JTextField.leadingIcon", null);
+        txtSearch.putClientProperty("JTextField.roundRect", true);
+        txtSearch.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            private void refresh() { filterUserList(txtSearch.getText()); }
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { refresh(); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { refresh(); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { refresh(); }
+        });
+        sidebarTop.add(txtSearch);
+        sidebarTop.add(Box.createRigidArea(new Dimension(0, 18)));
 
         JPanel listHeading = new JPanel(new BorderLayout());
         listHeading.setOpaque(false);
@@ -211,15 +235,15 @@ public class ClientUI extends JFrame {
 
         JPanel callButtonsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         callButtonsPanel.setOpaque(false);
-        JLabel encryptedBadge = new JLabel("  🔒  Encrypted  ");
+        JLabel encryptedBadge = new JLabel("  Encrypted  ", UITheme.icon("lock", 14), SwingConstants.LEFT);
         encryptedBadge.setOpaque(true);
         encryptedBadge.setBackground(new Color(229, 248, 240));
         encryptedBadge.setForeground(UITheme.SUCCESS);
-        encryptedBadge.setFont(new Font("Segoe UI Emoji", Font.BOLD, 11));
+        encryptedBadge.setFont(new Font("Segoe UI", Font.BOLD, 11));
         encryptedBadge.setBorder(new EmptyBorder(8, 8, 8, 8));
-        JButton btnVoice = createIconButton("📞", "Voice Call");
+        JButton btnVoice = createIconButton("phone", "Voice Call");
         btnVoice.addActionListener(e -> startVoiceCall());
-        JButton btnVideo = createIconButton("📹", "Video Call");
+        JButton btnVideo = createIconButton("video", "Video Call");
         btnVideo.addActionListener(e -> startVideoCall());
         callButtonsPanel.add(encryptedBadge);
         callButtonsPanel.add(btnVoice);
@@ -271,15 +295,15 @@ public class ClientUI extends JFrame {
         JPanel inputTools = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         inputTools.setOpaque(false);
         
-        JButton btnIcon = createIconButton("😊", "Send Icon/Sticker");
+        JButton btnIcon = createIconButton("smile", "Send Icon/Sticker");
         btnIcon.addActionListener(e -> showIconPicker(btnIcon));
-        JButton btnImage = createIconButton("🖼️", "Send Image");
+        JButton btnImage = createIconButton("image", "Send Image");
         btnImage.addActionListener(e -> sendImage());
-        JButton btnFile = createIconButton("📎", "Send File");
+        JButton btnFile = createIconButton("paperclip", "Send File");
         btnFile.addActionListener(e -> sendFile());
-        JButton btnStego = createIconButton("🔒", "Send Steganography Msg");
+        JButton btnStego = createIconButton("shield", "Send Steganography Msg");
         btnStego.addActionListener(e -> sendSteganography());
-        JButton btnSTT = createIconButton("🎤", "Speech to Text");
+        JButton btnSTT = createIconButton("mic", "Speech to Text");
         btnSTT.addActionListener(e -> speechToText());
 
         inputTools.add(btnIcon);
@@ -289,7 +313,7 @@ public class ClientUI extends JFrame {
         inputTools.add(btnSTT);
 
         txtInput = new JTextField();
-        txtInput.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 14));
+        txtInput.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 14));
         txtInput.setBackground(UITheme.SURFACE_ALT);
         txtInput.setForeground(UITheme.TEXT);
         txtInput.setBorder(new EmptyBorder(10, 14, 10, 14));
@@ -297,9 +321,9 @@ public class ClientUI extends JFrame {
         txtInput.putClientProperty("JTextField.roundRect", true);
         txtInput.addActionListener(e -> sendText());
 
-        JButton btnSend = new UITheme.RoundedButton("➤", UITheme.PRIMARY, UITheme.PRIMARY_DARK, 18);
-        btnSend.setFont(new Font("Segoe UI Symbol", Font.BOLD, 17));
-        btnSend.setPreferredSize(new Dimension(48, 42));
+        JButton btnSend = new UITheme.RoundedButton("Send", UITheme.PRIMARY, UITheme.PRIMARY_DARK, 18);
+        btnSend.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        btnSend.setPreferredSize(new Dimension(66, 42));
         btnSend.setToolTipText("Send");
         btnSend.addActionListener(e -> sendText());
 
@@ -323,10 +347,35 @@ public class ClientUI extends JFrame {
 
     private JPanel getChatPanelForUser(String user) {
         if (!chatPanels.containsKey(user)) {
-            JPanel p = new JPanel();
+            JPanel p = new JPanel() {
+                @Override
+                protected void paintComponent(Graphics g) {
+                    super.paintComponent(g);
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setColor(new Color(91, 108, 255, 12));
+                    for (int y = 24; y < getHeight(); y += 38) {
+                        for (int x = 24; x < getWidth(); x += 38) {
+                            g2.fillOval(x, y, 3, 3);
+                        }
+                    }
+                    g2.dispose();
+                }
+            };
             p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
             p.setBackground(colorBg);
             p.setBorder(new EmptyBorder(16, 10, 16, 10));
+
+            JPanel dateRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 4));
+            dateRow.setOpaque(false);
+            JLabel dateLabel = new JLabel("  Today  ");
+            dateLabel.setOpaque(true);
+            dateLabel.setBackground(new Color(232, 236, 245));
+            dateLabel.setForeground(UITheme.TEXT_MUTED);
+            dateLabel.setFont(new Font("Segoe UI", Font.BOLD, 10));
+            dateLabel.setBorder(new EmptyBorder(5, 9, 5, 9));
+            dateRow.add(dateLabel);
+            p.add(dateRow);
+            p.add(Box.createRigidArea(new Dimension(0, 8)));
             chatPanels.put(user, p);
         }
         return chatPanels.get(user);
@@ -339,11 +388,9 @@ public class ClientUI extends JFrame {
         });
     }
 
-    private JButton createIconButton(String text, String tooltip) {
-        JButton btn = new JButton(text);
+    private JButton createIconButton(String iconName, String tooltip) {
+        JButton btn = new JButton(UITheme.icon(iconName, 18));
         btn.setToolTipText(tooltip);
-        btn.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 17));
-        btn.setForeground(UITheme.TEXT_MUTED);
         btn.setBackground(UITheme.SURFACE_ALT);
         btn.setPreferredSize(new Dimension(40, 40));
         btn.setContentAreaFilled(true);
@@ -498,25 +545,39 @@ public class ClientUI extends JFrame {
 
     private void updateUserList(String[] users) {
         String prevSelected = selectedUser;
-        listModel.clear();
+        onlineUsers.clear();
         for (String u : users) {
             if (!u.equals(client.getUsername())) {
-                listModel.addElement(u);
+                onlineUsers.add(u);
             }
         }
+        filterUserList(txtSearch == null ? "" : txtSearch.getText());
         if (onlineCountLabel != null) {
-            onlineCountLabel.setText(listModel.size() + " online");
+            onlineCountLabel.setText(onlineUsers.size() + " online");
         }
         if (prevSelected != null && listModel.contains(prevSelected)) {
             userList.setSelectedValue(prevSelected, true);
         }
     }
 
+    private void filterUserList(String query) {
+        if (listModel == null) return;
+        String normalized = query == null ? "" : query.trim().toLowerCase();
+        listModel.clear();
+        for (String user : onlineUsers) {
+            if (normalized.isEmpty() || user.toLowerCase().contains(normalized)) {
+                listModel.addElement(user);
+            }
+        }
+    }
+
     private void addMessageBubble(String sender, String text, boolean isMe, boolean isStego, ImageIcon icon, boolean isSticker, String conversationUser) {
         if (conversationUser == null) return;
-        
+
+        boolean isSystem = "System".equals(sender);
         JPanel targetPanel = getChatPanelForUser(conversationUser);
-        JPanel wrapPanel = new JPanel(new FlowLayout(isMe ? FlowLayout.RIGHT : FlowLayout.LEFT, 18, 4));
+        int alignment = isSystem ? FlowLayout.CENTER : (isMe ? FlowLayout.RIGHT : FlowLayout.LEFT);
+        JPanel wrapPanel = new JPanel(new FlowLayout(alignment, 9, 4));
         wrapPanel.setOpaque(false);
 
         JPanel bubble = new JPanel() {
@@ -524,11 +585,10 @@ public class ClientUI extends JFrame {
             protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                if (isSticker) {
-                    // Do not draw background for stickers
-                } else {
+                if (!isSticker) {
                     g2.setColor(getBackground());
-                    g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 22, 22);
+                    int arc = isSystem ? 18 : 24;
+                    g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, arc, arc);
                 }
                 g2.dispose();
                 super.paintComponent(g);
@@ -536,20 +596,24 @@ public class ClientUI extends JFrame {
         };
         bubble.setLayout(new BoxLayout(bubble, BoxLayout.Y_AXIS));
         bubble.setOpaque(false);
-        bubble.setBorder(new EmptyBorder(10, 14, 10, 14));
-        
+        bubble.setBorder(isSystem
+            ? new EmptyBorder(6, 12, 6, 12)
+            : new EmptyBorder(10, 14, 8, 14));
+
         if (!isSticker) {
-            if (isMe) {
+            if (isSystem) {
+                bubble.setBackground(new Color(231, 235, 244));
+            } else if (isMe) {
                 bubble.setBackground(colorMe);
             } else {
-                bubble.setBackground(colorOther);
+                bubble.setBackground(isStego ? new Color(234, 241, 255) : colorOther);
             }
         }
 
-        if (!isMe && !sender.equals("System")) {
+        if (!isMe && !isSystem) {
             JLabel lblName = new JLabel(sender);
             lblName.setFont(new Font("Segoe UI", Font.BOLD, 12));
-            lblName.setForeground(UITheme.TEXT_MUTED);
+            lblName.setForeground(UITheme.PRIMARY_DARK);
             bubble.add(lblName);
             bubble.add(Box.createRigidArea(new Dimension(0, 3)));
         }
@@ -562,24 +626,31 @@ public class ClientUI extends JFrame {
         if (text != null && !text.isEmpty()) {
             JTextArea textArea = new JTextArea(text);
             textArea.setEditable(false);
+            textArea.setFocusable(false);
             textArea.setOpaque(false);
             textArea.setLineWrap(true);
             textArea.setWrapStyleWord(true);
-            
+
             if (isSticker) {
                 textArea.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 48));
                 textArea.setSize(new Dimension(80, Short.MAX_VALUE));
                 textArea.setPreferredSize(new Dimension(80, textArea.getPreferredSize().height));
+            } else if (isSystem) {
+                textArea.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+                int textWidth = Math.min(Math.max(100, text.length() * 6 + 12), 360);
+                textArea.setSize(new Dimension(textWidth, Short.MAX_VALUE));
+                textArea.setPreferredSize(new Dimension(textWidth, textArea.getPreferredSize().height));
             } else {
-                textArea.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 14));
-                int textWidth = Math.min(text.length() * 8 + 12, 420);
-                if(textWidth < 52) textWidth = 52;
+                textArea.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 14));
+                int textWidth = Math.min(Math.max(58, text.length() * 8 + 12), 390);
                 textArea.setSize(new Dimension(textWidth, Short.MAX_VALUE));
                 textArea.setPreferredSize(new Dimension(textWidth, textArea.getPreferredSize().height));
             }
-            
+
             if (isSticker) {
                 textArea.setForeground(Color.BLACK); // Emoji colors are rendered by OS usually
+            } else if (isSystem) {
+                textArea.setForeground(UITheme.TEXT_MUTED);
             } else if (isMe) {
                 textArea.setForeground(Color.WHITE);
             } else {
@@ -588,6 +659,19 @@ public class ClientUI extends JFrame {
             bubble.add(textArea);
         }
 
+        if (!isSystem && !isSticker) {
+            bubble.add(Box.createRigidArea(new Dimension(0, 4)));
+            String time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
+            JLabel meta = new JLabel((isMe ? "Sent  " : "") + time);
+            meta.setFont(new Font("Segoe UI", Font.PLAIN, 9));
+            meta.setForeground(isMe ? new Color(255, 255, 255, 190) : UITheme.TEXT_MUTED);
+            meta.setAlignmentX(Component.RIGHT_ALIGNMENT);
+            bubble.add(meta);
+        }
+
+        if (!isMe && !isSystem) {
+            wrapPanel.add(UITheme.avatar(sender, 32));
+        }
         wrapPanel.add(bubble);
         targetPanel.add(wrapPanel);
         targetPanel.revalidate();

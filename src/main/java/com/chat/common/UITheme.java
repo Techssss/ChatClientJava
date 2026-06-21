@@ -1,5 +1,6 @@
 package com.chat.common;
 
+import com.formdev.flatlaf.extras.FlatSVGIcon;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
@@ -22,6 +23,10 @@ public final class UITheme {
 
     private UITheme() {}
 
+    public static Icon icon(String name, int size) {
+        return new FlatSVGIcon("icons/" + name + ".svg", size, size);
+    }
+
     public static void applyDefaults() {
         UIManager.put("defaultFont", new Font("Segoe UI", Font.PLAIN, 14));
         UIManager.put("Component.arc", 16);
@@ -36,16 +41,36 @@ public final class UITheme {
     }
 
     public static JLabel avatar(String name, int size) {
-        String initial = name == null || name.isBlank() ? "?" : name.substring(0, 1).toUpperCase();
-        JLabel label = new JLabel(initial, SwingConstants.CENTER);
-        label.setOpaque(true);
-        label.setBackground(PRIMARY);
-        label.setForeground(Color.WHITE);
-        label.setFont(new Font("Segoe UI", Font.BOLD, Math.max(14, size / 3)));
-        label.setPreferredSize(new Dimension(size, size));
-        label.setMinimumSize(new Dimension(size, size));
-        label.setBorder(BorderFactory.createLineBorder(new Color(255, 255, 255, 120), 2, true));
-        return label;
+        return new AvatarLabel(name, size);
+    }
+
+    private static class AvatarLabel extends JLabel {
+        private final int avatarSize;
+
+        AvatarLabel(String name, int size) {
+            super(name == null || name.isBlank() ? "?" : name.substring(0, 1).toUpperCase(), SwingConstants.CENTER);
+            this.avatarSize = size;
+            setOpaque(false);
+            setBackground(PRIMARY);
+            setForeground(Color.WHITE);
+            setFont(new Font("Segoe UI", Font.BOLD, Math.max(14, size / 3)));
+            setPreferredSize(new Dimension(size, size));
+            setMinimumSize(new Dimension(size, size));
+            setMaximumSize(new Dimension(size, size));
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setPaint(new GradientPaint(0, 0, getBackground().brighter(), getWidth(), getHeight(), getBackground()));
+            g2.fillOval(1, 1, avatarSize - 2, avatarSize - 2);
+            g2.setColor(new Color(255, 255, 255, 150));
+            g2.setStroke(new BasicStroke(1.4f));
+            g2.drawOval(1, 1, avatarSize - 3, avatarSize - 3);
+            g2.dispose();
+            super.paintComponent(g);
+        }
     }
 
     public static class RoundedPanel extends JPanel {
@@ -120,6 +145,45 @@ public final class UITheme {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setColor(isEnabled() ? currentColor : new Color(180, 188, 205));
             g2.fillRoundRect(0, 0, getWidth(), getHeight(), radius, radius);
+            g2.dispose();
+            super.paintComponent(g);
+        }
+    }
+
+    public static class CircleButton extends JButton {
+        private Color hoverColor;
+        private boolean hovered;
+
+        public CircleButton(Icon icon, Color background, int size) {
+            super(icon);
+            this.hoverColor = background.brighter();
+            setBackground(background);
+            setPreferredSize(new Dimension(size, size));
+            setMinimumSize(new Dimension(size, size));
+            setMaximumSize(new Dimension(size, size));
+            setFocusPainted(false);
+            setBorderPainted(false);
+            setContentAreaFilled(false);
+            setOpaque(false);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            addMouseListener(new MouseAdapter() {
+                @Override public void mouseEntered(MouseEvent e) { hovered = true; repaint(); }
+                @Override public void mouseExited(MouseEvent e) { hovered = false; repaint(); }
+            });
+        }
+
+        public void setButtonColors(Color background, Color hover) {
+            setBackground(background);
+            this.hoverColor = hover;
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(hovered ? hoverColor : getBackground());
+            g2.fillOval(0, 0, getWidth(), getHeight());
             g2.dispose();
             super.paintComponent(g);
         }
