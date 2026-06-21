@@ -1,0 +1,23 @@
+# Maven build output
+target/
+
+# IDE and local agent settings
+.idea/
+*.iml
+.agents/
+.codex/
+
+# Local runtime data
+*.db
+*.db-journal
+*.log
+
+# Compiled and temporary files
+*.class
+*.tmp
+/TestConn.java
+/test_log.txt
+
+# OS metadata
+.DS_Store
+Thumbs.db
