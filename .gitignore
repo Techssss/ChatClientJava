@@ -21,3 +21,9 @@ target/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Generated report QA and drafts
+docs/qa_*/
+docs/*_draft*.docx
+docs/*_layout.docx
+docs/__pycache__/
