@@ -45,13 +45,13 @@ public class ClientHandler extends Thread {
             out.flush();
             in = new ObjectInputStream(socket.getInputStream());
 
-            // Vòng lặp xử lý trước khi CONNECT — cho phép REGISTER trước
+            // Vòng lặp xử lý trước khi CONNECT — cho phép LOGIN / REGISTER trước
             while (true) {
                 Message msg = (Message) in.readObject();
 
-                if (msg.getType() == Message.MessageType.REGISTER) {
-                    // Xử lý đăng ký / đăng nhập, trả về userId
-                    handleRegister(msg);
+                if (msg.getType() == Message.MessageType.REGISTER ||
+                    msg.getType() == Message.MessageType.LOGIN) {
+                    handleAuthentication(msg);
                     // Tiếp tục chờ CONNECT
 
                 } else if (msg.getType() == Message.MessageType.CONNECT) {
@@ -98,18 +98,14 @@ public class ClientHandler extends Thread {
         }
     }
 
-    /**
-     * Client đăng ký tài khoản mới hoặc đăng nhập.
-     * Content format: "username:passwordHash"
-     * Server tự generate RSA key pair khi đăng ký mới.
-     */
-    private void handleRegister(Message msg) {
+    /** Xử lý đăng nhập hoặc đăng ký tách biệt. Content: "username:passwordHash". */
+    private void handleAuthentication(Message msg) {
+        boolean registering = msg.getType() == Message.MessageType.REGISTER;
         try {
             String content = (String) msg.getContent();
             String[] parts = content.split(":", 2);
             if (parts.length != 2) {
-                sendToSelf(new Message(Message.MessageType.REGISTER_FAIL, "Server",
-                    "Invalid registration format"));
+                sendAuthFailure(registering, "Invalid authentication format");
                 return;
             }
             String uname        = parts[0];
@@ -117,43 +113,51 @@ public class ClientHandler extends Thread {
 
             UserRecord existing = userDAO.findByUsername(uname);
 
-            if (existing == null) {
-                // Đăng ký mới: generate RSA key pair
+            if (registering) {
+                if (existing != null) {
+                    sendAuthFailure(true, "Username already exists");
+                    return;
+                }
+
                 KeyPair keyPair  = RSAUtil.generateKeyPair();
                 String pubB64   = RSAUtil.publicKeyToBase64(keyPair.getPublic());
                 String privB64  = RSAUtil.privateKeyToBase64(keyPair.getPrivate());
 
                 int userId = userDAO.createUser(uname, passwordHash, pubB64, privB64);
                 if (userId == -1) {
-                    sendToSelf(new Message(Message.MessageType.REGISTER_FAIL, "Server",
-                        "Failed to create user"));
+                    sendAuthFailure(true, "Failed to create user");
                     return;
                 }
                 server.getUi().log("New user registered: " + uname + " (id=" + userId + ")");
 
-                // REGISTER_OK content = "userId:publicKeyB64:privateKeyB64"
                 String okContent = userId + ":" + pubB64 + ":" + privB64;
-                Message ok = new Message(Message.MessageType.REGISTER_OK, "Server", okContent);
-                sendToSelf(ok);
+                sendToSelf(new Message(Message.MessageType.REGISTER_OK, "Server", okContent));
 
             } else {
-                // Đăng nhập: kiểm tra password
+                if (existing == null) {
+                    sendAuthFailure(false, "Account not found");
+                    return;
+                }
                 if (!existing.passwordHash().equals(passwordHash)) {
-                    sendToSelf(new Message(Message.MessageType.REGISTER_FAIL, "Server",
-                        "Wrong password"));
+                    sendAuthFailure(false, "Wrong password");
                     return;
                 }
                 server.getUi().log("User logged in: " + uname + " (id=" + existing.id() + ")");
 
-                // Gửi cả key về cho client
                 String okContent = existing.id() + ":" + existing.publicKeyB64() + ":" + existing.privateKeyB64();
-                Message ok = new Message(Message.MessageType.REGISTER_OK, "Server", okContent);
-                sendToSelf(ok);
+                sendToSelf(new Message(Message.MessageType.LOGIN_OK, "Server", okContent));
             }
         } catch (Exception e) {
-            server.getUi().log("[ERROR] Register error: " + e.getMessage());
-            sendToSelf(new Message(Message.MessageType.REGISTER_FAIL, "Server", e.getMessage()));
+            server.getUi().log("[ERROR] Authentication error: " + e.getMessage());
+            sendAuthFailure(registering, e.getMessage());
         }
+    }
+
+    private void sendAuthFailure(boolean registering, String message) {
+        Message.MessageType type = registering
+            ? Message.MessageType.REGISTER_FAIL
+            : Message.MessageType.LOGIN_FAIL;
+        sendToSelf(new Message(type, "Server", message));
     }
 
     /**

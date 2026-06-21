@@ -10,37 +10,123 @@ import java.awt.*;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
-/**
- * Màn hình đăng nhập / đăng ký.
- *
- * Client KHÔNG trực tiếp truy cập DB. Thay vào đó:
- * 1. Mở kết nối socket tạm tới server.
- * 2. Gửi REGISTER message với "username:passwordHash".
- * 3. Server xử lý (tạo user + RSA key nếu mới, hoặc xác thực nếu đã có).
- * 4. Server trả REGISTER_OK (kèm userId) hoặc REGISTER_FAIL.
- * 5. Sau khi thành công, đóng socket tạm và mở ClientUI với userId đã biết.
- */
+/** Explicit sign-in and account-registration screen. */
 public class LoginUI extends JFrame {
+    private enum AuthMode { LOGIN, REGISTER }
 
-    private JTextField    txtIp, txtPort, txtUsername;
+    private JTextField txtIp;
+    private JTextField txtPort;
+    private JTextField txtUsername;
     private JPasswordField txtPassword;
-    private JButton       btnLogin;
+    private JPasswordField txtConfirmPassword;
+    private JPanel confirmGroup;
+    private JButton btnSubmit;
+    private JButton btnSignInMode;
+    private JButton btnRegisterMode;
+    private JLabel lblHeader;
+    private JLabel lblSub;
+    private JLabel lblHint;
+    private AuthMode authMode = AuthMode.LOGIN;
 
     public LoginUI() {
         setTitle("Chatly — Sign in");
-        setSize(880, 560);
+        setSize(920, 650);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
         setResizable(false);
         setLayout(new BorderLayout());
 
-        UITheme.GradientPanel brandPanel = new UITheme.GradientPanel(
+        add(createBrandPanel(), BorderLayout.WEST);
+
+        JPanel formShell = new JPanel(new GridBagLayout());
+        formShell.setBackground(UITheme.BACKGROUND);
+        formShell.setBorder(new EmptyBorder(28, 52, 28, 52));
+
+        JPanel formPanel = new JPanel();
+        formPanel.setOpaque(false);
+        formPanel.setLayout(new BoxLayout(formPanel, BoxLayout.Y_AXIS));
+        formPanel.setPreferredSize(new Dimension(445, 555));
+
+        lblHeader = new JLabel("Welcome back");
+        lblHeader.setFont(new Font("Segoe UI", Font.BOLD, 31));
+        lblHeader.setForeground(UITheme.TEXT);
+        lblHeader.setAlignmentX(Component.LEFT_ALIGNMENT);
+        lblSub = new JLabel("Sign in to continue your conversations.");
+        lblSub.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        lblSub.setForeground(UITheme.TEXT_MUTED);
+        lblSub.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        formPanel.add(lblHeader);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 4)));
+        formPanel.add(lblSub);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 18)));
+        formPanel.add(createModeSwitch());
+        formPanel.add(Box.createRigidArea(new Dimension(0, 18)));
+
+        JLabel lblIp = createFieldLabel("SERVER ADDRESS");
+        txtIp = new JTextField("localhost");
+        styleField(txtIp, "localhost or 192.168.x.x");
+        JLabel lblPort = createFieldLabel("PORT");
+        txtPort = new JTextField("5000");
+        styleField(txtPort, "5000");
+
+        JPanel serverRow = new JPanel(new GridLayout(1, 2, 12, 0));
+        serverRow.setOpaque(false);
+        serverRow.add(fieldGroup(lblIp, txtIp));
+        serverRow.add(fieldGroup(lblPort, txtPort));
+        serverRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 66));
+        serverRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        formPanel.add(serverRow);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 12)));
+
+        JLabel lblUser = createFieldLabel("USERNAME");
+        txtUsername = new JTextField();
+        styleField(txtUsername, "Enter your username");
+        formPanel.add(fieldGroup(lblUser, txtUsername));
+        formPanel.add(Box.createRigidArea(new Dimension(0, 12)));
+
+        JLabel lblPassword = createFieldLabel("PASSWORD");
+        txtPassword = new JPasswordField();
+        styleField(txtPassword, "Enter your password");
+        formPanel.add(fieldGroup(lblPassword, txtPassword));
+        formPanel.add(Box.createRigidArea(new Dimension(0, 12)));
+
+        JLabel lblConfirm = createFieldLabel("CONFIRM PASSWORD");
+        txtConfirmPassword = new JPasswordField();
+        styleField(txtConfirmPassword, "Repeat your password");
+        confirmGroup = fieldGroup(lblConfirm, txtConfirmPassword);
+        formPanel.add(confirmGroup);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 18)));
+
+        btnSubmit = new UITheme.RoundedButton("Sign in  →", UITheme.PRIMARY, UITheme.PRIMARY_DARK, 18);
+        btnSubmit.setAlignmentX(Component.LEFT_ALIGNMENT);
+        btnSubmit.setMaximumSize(new Dimension(Integer.MAX_VALUE, 48));
+        btnSubmit.setPreferredSize(new Dimension(445, 48));
+        btnSubmit.addActionListener(e -> authenticate());
+        formPanel.add(btnSubmit);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+
+        lblHint = new JLabel("No account yet? Select Create account above.");
+        lblHint.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+        lblHint.setForeground(UITheme.TEXT_MUTED);
+        lblHint.setAlignmentX(Component.LEFT_ALIGNMENT);
+        formPanel.add(lblHint);
+
+        formShell.add(formPanel);
+        add(formShell, BorderLayout.CENTER);
+        getRootPane().setDefaultButton(btnSubmit);
+        updateModeUi();
+    }
+
+    private JPanel createBrandPanel() {
+        UITheme.GradientPanel panel = new UITheme.GradientPanel(
             new Color(74, 85, 224), new Color(42, 198, 218));
-        brandPanel.setPreferredSize(new Dimension(340, 0));
-        brandPanel.setLayout(new BoxLayout(brandPanel, BoxLayout.Y_AXIS));
-        brandPanel.setBorder(new EmptyBorder(64, 42, 50, 42));
+        panel.setPreferredSize(new Dimension(350, 0));
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setBorder(new EmptyBorder(68, 44, 52, 44));
 
         JLabel logo = new JLabel("✦");
         logo.setFont(new Font("Segoe UI Symbol", Font.BOLD, 42));
@@ -50,98 +136,82 @@ public class LoginUI extends JFrame {
         brand.setFont(new Font("Segoe UI", Font.BOLD, 38));
         brand.setForeground(Color.WHITE);
         brand.setAlignmentX(Component.LEFT_ALIGNMENT);
-        JLabel tagline = new JLabel("<html>Conversations that feel<br>simple, fast and personal.</html>");
-        tagline.setFont(new Font("Segoe UI", Font.PLAIN, 17));
-        tagline.setForeground(new Color(255, 255, 255, 220));
+        JLabel tagline = new JLabel("<html>One account.<br>All your conversations.</html>");
+        tagline.setFont(new Font("Segoe UI", Font.PLAIN, 18));
+        tagline.setForeground(new Color(255, 255, 255, 225));
         tagline.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        brandPanel.add(logo);
-        brandPanel.add(Box.createRigidArea(new Dimension(0, 18)));
-        brandPanel.add(brand);
-        brandPanel.add(Box.createRigidArea(new Dimension(0, 12)));
-        brandPanel.add(tagline);
-        brandPanel.add(Box.createVerticalGlue());
+        panel.add(logo);
+        panel.add(Box.createRigidArea(new Dimension(0, 18)));
+        panel.add(brand);
+        panel.add(Box.createRigidArea(new Dimension(0, 12)));
+        panel.add(tagline);
+        panel.add(Box.createVerticalGlue());
 
-        JLabel secureNote = new JLabel("●  Private messaging  •  Secure connection");
-        secureNote.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-        secureNote.setForeground(new Color(255, 255, 255, 205));
-        secureNote.setAlignmentX(Component.LEFT_ALIGNMENT);
-        brandPanel.add(secureNote);
-        add(brandPanel, BorderLayout.WEST);
+        JLabel note = new JLabel("●  Private messaging  •  Secure account");
+        note.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        note.setForeground(new Color(255, 255, 255, 205));
+        note.setAlignmentX(Component.LEFT_ALIGNMENT);
+        panel.add(note);
+        return panel;
+    }
 
-        JPanel formShell = new JPanel(new GridBagLayout());
-        formShell.setBackground(UITheme.BACKGROUND);
-        formShell.setBorder(new EmptyBorder(35, 56, 35, 56));
+    private JPanel createModeSwitch() {
+        UITheme.RoundedPanel switchPanel = new UITheme.RoundedPanel(18);
+        switchPanel.setBackground(UITheme.SURFACE_ALT);
+        switchPanel.setLayout(new GridLayout(1, 2, 6, 0));
+        switchPanel.setBorder(new EmptyBorder(4, 4, 4, 4));
+        switchPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 46));
+        switchPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        JPanel formPanel = new JPanel();
-        formPanel.setOpaque(false);
-        formPanel.setLayout(new BoxLayout(formPanel, BoxLayout.Y_AXIS));
-        formPanel.setPreferredSize(new Dimension(410, 440));
+        btnSignInMode = modeButton("Sign in");
+        btnRegisterMode = modeButton("Create account");
+        btnSignInMode.addActionListener(e -> setAuthMode(AuthMode.LOGIN));
+        btnRegisterMode.addActionListener(e -> setAuthMode(AuthMode.REGISTER));
+        switchPanel.add(btnSignInMode);
+        switchPanel.add(btnRegisterMode);
+        return switchPanel;
+    }
 
-        JLabel lblHeader = new JLabel("Welcome back");
-        lblHeader.setFont(new Font("Segoe UI", Font.BOLD, 31));
-        lblHeader.setForeground(UITheme.TEXT);
-        lblHeader.setAlignmentX(Component.LEFT_ALIGNMENT);
-        JLabel lblSub = new JLabel("Sign in or create a new account automatically.");
-        lblSub.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        lblSub.setForeground(UITheme.TEXT_MUTED);
-        lblSub.setAlignmentX(Component.LEFT_ALIGNMENT);
+    private JButton modeButton(String text) {
+        JButton button = new JButton(text);
+        button.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        button.setFocusPainted(false);
+        button.setBorderPainted(false);
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.putClientProperty("JButton.buttonType", "roundRect");
+        return button;
+    }
 
-        JLabel lblIp = createFieldLabel("SERVER ADDRESS");
-        txtIp = new JTextField("localhost");
-        styleField(txtIp, "localhost");
-        JLabel lblPort = createFieldLabel("PORT");
-        txtPort = new JTextField("5000");
-        styleField(txtPort, "5000");
-        JLabel lblUser = createFieldLabel("USERNAME");
-        txtUsername = new JTextField("");
-        styleField(txtUsername, "Enter your username");
-        JLabel lblPwd = createFieldLabel("PASSWORD");
-        txtPassword = new JPasswordField("");
-        styleField(txtPassword, "Enter your password");
+    private void setAuthMode(AuthMode mode) {
+        if (authMode == mode) return;
+        authMode = mode;
+        txtPassword.setText("");
+        txtConfirmPassword.setText("");
+        updateModeUi();
+    }
 
-        btnLogin = new UITheme.RoundedButton("Connect to Chat  →", UITheme.PRIMARY, UITheme.PRIMARY_DARK, 18);
-        btnLogin.setAlignmentX(Component.LEFT_ALIGNMENT);
-        btnLogin.setMaximumSize(new Dimension(Integer.MAX_VALUE, 48));
-        btnLogin.setPreferredSize(new Dimension(410, 48));
-        btnLogin.addActionListener(e -> connect());
+    private void updateModeUi() {
+        boolean registering = authMode == AuthMode.REGISTER;
+        setModeButtonState(btnSignInMode, !registering);
+        setModeButtonState(btnRegisterMode, registering);
+        confirmGroup.setVisible(registering);
+        lblHeader.setText(registering ? "Create your account" : "Welcome back");
+        lblSub.setText(registering
+            ? "Choose a username and secure password to get started."
+            : "Sign in to continue your conversations.");
+        lblHint.setText(registering
+            ? "Already registered? Switch back to Sign in."
+            : "No account yet? Select Create account above.");
+        btnSubmit.setText(registering ? "Create account  →" : "Sign in  →");
+        setTitle(registering ? "Chatly — Create account" : "Chatly — Sign in");
+        revalidate();
+        repaint();
+    }
 
-        formPanel.add(lblHeader);
-        formPanel.add(Box.createRigidArea(new Dimension(0, 5)));
-        formPanel.add(lblSub);
-        formPanel.add(Box.createRigidArea(new Dimension(0, 24)));
-        formPanel.add(lblIp);
-        formPanel.add(Box.createRigidArea(new Dimension(0, 5)));
-        formPanel.add(txtIp);
-        formPanel.add(Box.createRigidArea(new Dimension(0, 12)));
-
-        JPanel row = new JPanel(new GridLayout(1, 2, 12, 0));
-        row.setOpaque(false);
-        JPanel portBox = fieldGroup(lblPort, txtPort);
-        JPanel userBox = fieldGroup(lblUser, txtUsername);
-        row.add(portBox);
-        row.add(userBox);
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 70));
-        row.setAlignmentX(Component.LEFT_ALIGNMENT);
-        formPanel.add(row);
-        formPanel.add(Box.createRigidArea(new Dimension(0, 12)));
-        formPanel.add(lblPwd);
-        formPanel.add(Box.createRigidArea(new Dimension(0, 5)));
-        formPanel.add(txtPassword);
-        formPanel.add(Box.createRigidArea(new Dimension(0, 20)));
-        formPanel.add(btnLogin);
-        formPanel.add(Box.createRigidArea(new Dimension(0, 10)));
-
-        JLabel lblHint = new JLabel("New here? Your account will be created on first sign in.");
-        lblHint.setFont(new Font("Segoe UI", Font.PLAIN, 11));
-        lblHint.setForeground(UITheme.TEXT_MUTED);
-        lblHint.setAlignmentX(Component.LEFT_ALIGNMENT);
-        formPanel.add(lblHint);
-
-        formShell.add(formPanel);
-        add(formShell, BorderLayout.CENTER);
-
-        getRootPane().setDefaultButton(btnLogin);
+    private void setModeButtonState(JButton button, boolean active) {
+        button.setBackground(active ? UITheme.PRIMARY : UITheme.SURFACE_ALT);
+        button.setForeground(active ? Color.WHITE : UITheme.TEXT_MUTED);
     }
 
     private JLabel createFieldLabel(String text) {
@@ -167,6 +237,7 @@ public class LoginUI extends JFrame {
         JPanel panel = new JPanel();
         panel.setOpaque(false);
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
         label.setAlignmentX(Component.LEFT_ALIGNMENT);
         field.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(label);
@@ -175,41 +246,52 @@ public class LoginUI extends JFrame {
         return panel;
     }
 
-    private void connect() {
+    private void authenticate() {
         String ip = txtIp.getText().trim();
         int port;
         try {
             port = Integer.parseInt(txtPort.getText().trim());
         } catch (NumberFormatException e) {
-            JOptionPane.showMessageDialog(this, "Invalid port", "Error", JOptionPane.ERROR_MESSAGE);
+            showValidationError("Port must be a valid number.");
             return;
         }
+
         String username = txtUsername.getText().trim();
-        String password = new String(txtPassword.getPassword()).trim();
-
+        String password = new String(txtPassword.getPassword());
         if (username.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Username cannot be empty", "Error", JOptionPane.ERROR_MESSAGE);
+            showValidationError("Username cannot be empty.");
             return;
         }
-        if (password.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Password cannot be empty", "Error", JOptionPane.ERROR_MESSAGE);
+        if (password.isBlank()) {
+            showValidationError("Password cannot be empty.");
             return;
         }
 
-        btnLogin.setText("Connecting...");
-        btnLogin.setEnabled(false);
+        AuthMode requestedMode = authMode;
+        if (requestedMode == AuthMode.REGISTER) {
+            String confirm = new String(txtConfirmPassword.getPassword());
+            if (username.length() < 3) {
+                showValidationError("Username must contain at least 3 characters.");
+                return;
+            }
+            if (password.length() < 6) {
+                showValidationError("Password must contain at least 6 characters.");
+                return;
+            }
+            if (!password.equals(confirm)) {
+                showValidationError("Password confirmation does not match.");
+                return;
+            }
+        }
 
+        setBusy(true, requestedMode);
         SwingWorker<ClientUI, Void> worker = new SwingWorker<>() {
             @Override
             protected ClientUI doInBackground() throws Exception {
-                // Bước 1: Đăng nhập/đăng ký qua server, nhận về userId + keys
-                AuthResult auth = registerViaServer(ip, port, username, password);
-
-                // Bước 2: Mở ClientUI với đầy đủ crypto context
+                AuthResult auth = authenticateViaServer(ip, port, username, password, requestedMode);
                 ClientUI ui = new ClientUI(ip, port, username,
                     auth.userId(), auth.privateKeyB64(), auth.publicKeyB64());
-                boolean connected = ui.connect();
-                if (!connected) throw new RuntimeException("Could not connect to server");
+                if (!ui.connect()) throw new RuntimeException("Could not connect to server");
                 return ui;
             }
 
@@ -220,66 +302,78 @@ public class LoginUI extends JFrame {
                     LoginUI.this.dispose();
                     ui.setVisible(true);
                 } catch (Exception ex) {
-                    String msg = ex.getCause() != null ? ex.getCause().getMessage() : ex.getMessage();
-                    JOptionPane.showMessageDialog(LoginUI.this, msg, "Connection Failed", JOptionPane.ERROR_MESSAGE);
-                    btnLogin.setText("Connect to Chat");
-                    btnLogin.setEnabled(true);
+                    String message = ex.getCause() != null ? ex.getCause().getMessage() : ex.getMessage();
+                    JOptionPane.showMessageDialog(LoginUI.this, message,
+                        requestedMode == AuthMode.LOGIN ? "Sign in failed" : "Registration failed",
+                        JOptionPane.ERROR_MESSAGE);
+                    setBusy(false, requestedMode);
                 }
             }
         };
         worker.execute();
     }
 
-    /**
-     * Kết quả đăng ký / đăng nhập từ server.
-     */
-    private record AuthResult(int userId, String publicKeyB64, String privateKeyB64) {}
+    private void setBusy(boolean busy, AuthMode mode) {
+        btnSubmit.setEnabled(!busy);
+        btnSignInMode.setEnabled(!busy);
+        btnRegisterMode.setEnabled(!busy);
+        btnSubmit.setText(busy
+            ? (mode == AuthMode.LOGIN ? "Signing in…" : "Creating account…")
+            : (mode == AuthMode.LOGIN ? "Sign in  →" : "Create account  →"));
+    }
 
-    /**
-     * Mở socket tạm, gửi REGISTER, đọc response, đóng socket.
-     * Server tự tạo RSA key pair nếu user mới, trả về userId + key.
-     */
-    private AuthResult registerViaServer(String ip, int port, String username, String password) throws Exception {
+    private AuthResult authenticateViaServer(String ip, int port, String username,
+                                               String password, AuthMode mode) throws Exception {
         String passwordHash = hashPassword(password);
+        Message.MessageType requestType = mode == AuthMode.LOGIN
+            ? Message.MessageType.LOGIN
+            : Message.MessageType.REGISTER;
+        Message.MessageType successType = mode == AuthMode.LOGIN
+            ? Message.MessageType.LOGIN_OK
+            : Message.MessageType.REGISTER_OK;
 
-        try (java.net.Socket tempSocket = new java.net.Socket(ip, port)) {
-            java.io.ObjectOutputStream tempOut = new java.io.ObjectOutputStream(tempSocket.getOutputStream());
+        try (Socket tempSocket = new Socket(ip, port);
+             ObjectOutputStream tempOut = new ObjectOutputStream(tempSocket.getOutputStream())) {
             tempOut.flush();
-            java.io.ObjectInputStream tempIn = new java.io.ObjectInputStream(tempSocket.getInputStream());
+            try (ObjectInputStream tempIn = new ObjectInputStream(tempSocket.getInputStream())) {
+                Message request = new Message(requestType, username, username + ":" + passwordHash);
+                tempOut.writeObject(request);
+                tempOut.flush();
+                Message response = (Message) tempIn.readObject();
 
-            // Gửi REGISTER: content = "username:passwordHash"
-            Message regMsg = new Message(Message.MessageType.REGISTER, username,
-                username + ":" + passwordHash);
-            tempOut.writeObject(regMsg);
-            tempOut.flush();
-
-            // Đọc response
-            Message response = (Message) tempIn.readObject();
-
-            if (response.getType() == Message.MessageType.REGISTER_OK) {
-                // content = "userId:publicKeyB64:privateKeyB64"
+                if (response.getType() != successType) {
+                    throw new RuntimeException(humanizeAuthError((String) response.getContent(), mode));
+                }
                 String[] parts = ((String) response.getContent()).split(":", 3);
-                int userId        = Integer.parseInt(parts[0]);
-                String pubKeyB64  = parts[1];
-                String privKeyB64 = parts[2];
-                return new AuthResult(userId, pubKeyB64, privKeyB64);
-            } else {
-                String errMsg = (String) response.getContent();
-                if (errMsg != null && errMsg.contains("Wrong password"))
-                    throw new RuntimeException("Sai mật khẩu cho tài khoản: " + username);
-                throw new RuntimeException("Đăng ký thất bại: " + errMsg);
+                if (parts.length != 3) throw new RuntimeException("Invalid response from server");
+                return new AuthResult(Integer.parseInt(parts[0]), parts[1], parts[2]);
             }
         }
     }
 
-    /** SHA-256 hash của password. Production nên dùng BCrypt. */
+    private String humanizeAuthError(String error, AuthMode mode) {
+        if (error == null || error.isBlank()) return "Authentication failed.";
+        return switch (error) {
+            case "Wrong password" -> "Incorrect password. Please try again.";
+            case "Account not found" -> "Account does not exist. Create one first.";
+            case "Username already exists" -> "This username is already taken.";
+            default -> (mode == AuthMode.LOGIN ? "Sign in failed: " : "Registration failed: ") + error;
+        };
+    }
+
+    private void showValidationError(String message) {
+        JOptionPane.showMessageDialog(this, message, "Check your information", JOptionPane.WARNING_MESSAGE);
+    }
+
     private String hashPassword(String password) throws Exception {
         MessageDigest md = MessageDigest.getInstance("SHA-256");
-        byte[] hash = md.digest(password.getBytes("UTF-8"));
-        StringBuilder sb = new StringBuilder();
-        for (byte b : hash) sb.append(String.format("%02x", b));
-        return sb.toString();
+        byte[] hash = md.digest(password.getBytes(StandardCharsets.UTF_8));
+        StringBuilder result = new StringBuilder();
+        for (byte b : hash) result.append(String.format("%02x", b));
+        return result.toString();
     }
+
+    private record AuthResult(int userId, String publicKeyB64, String privateKeyB64) {}
 
     public static void main(String[] args) {
         FlatLightLaf.setup();

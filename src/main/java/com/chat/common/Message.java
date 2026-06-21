@@ -3,7 +3,7 @@ package com.chat.common;
 import java.io.Serializable;
 
 public class Message implements Serializable {
-    private static final long serialVersionUID = 2L; // bump version sau khi thêm field
+    private static final long serialVersionUID = 3L;
 
     public enum MessageType {
         CONNECT, DISCONNECT, USER_LIST,
@@ -16,9 +16,12 @@ public class Message implements Serializable {
         // Key Exchange — client request public key của user khác từ server
         KEY_REQUEST,   // client → server: content = username cần lấy key
         KEY_RESPONSE,  // server → client: content = publicKeyBase64, sender = username
-        // Registration — client đăng ký qua server (không trực tiếp vào DB)
+        // Authentication — client xác thực qua server (không trực tiếp vào DB)
+        LOGIN,
+        LOGIN_OK,
+        LOGIN_FAIL,
         REGISTER,      // client → server: content = "username:passwordHash"
-        REGISTER_OK,   // server → client: content = userId (Integer)
+        REGISTER_OK,   // server → client: content = "userId:publicKey:privateKey"
         REGISTER_FAIL  // server → client: content = thông báo lỗi
     }
 
