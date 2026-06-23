@@ -74,9 +74,13 @@ public class MessageDAO {
         // JOIN với message_keys để lấy AES key phù hợp với currentUser
         String sql = """
             SELECT m.id, m.sender_id, m.receiver_id, m.encrypted_content, m.iv,
-                   mk.encrypted_aes_key, m.created_at
+                   mk.encrypted_aes_key, m.created_at,
+                   sender.username AS sender_username,
+                   receiver.username AS receiver_username
             FROM messages m
             JOIN message_keys mk ON mk.message_id = m.id AND mk.user_id = ?
+            JOIN users sender ON sender.id = m.sender_id
+            JOIN users receiver ON receiver.id = m.receiver_id
             WHERE (m.sender_id = ? AND m.receiver_id = ?)
                OR (m.sender_id = ? AND m.receiver_id = ?)
             ORDER BY m.created_at ASC
@@ -93,6 +97,8 @@ public class MessageDAO {
                     rs.getInt("id"),
                     rs.getInt("sender_id"),
                     rs.getInt("receiver_id"),
+                    rs.getString("sender_username"),
+                    rs.getString("receiver_username"),
                     rs.getString("encrypted_content"),
                     rs.getString("iv"),
                     rs.getString("encrypted_aes_key"),
@@ -113,6 +119,8 @@ public class MessageDAO {
         int messageId,
         int senderId,
         int receiverId,
+        String senderUsername,
+        String receiverUsername,
         String encryptedContent,  // Base64 — AES-GCM ciphertext
         String ivB64,             // Base64 — 12-byte IV
         String encryptedAesKey,   // Base64 — RSA-encrypted AES key (của currentUser)

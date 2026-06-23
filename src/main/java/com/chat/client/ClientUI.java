@@ -23,9 +23,12 @@ import java.security.PublicKey;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 
@@ -37,6 +40,7 @@ public class ClientUI extends JFrame {
     private DefaultListModel<String> listModel;
     private JTextField txtSearch;
     private final List<String> onlineUsers = new ArrayList<>();
+    private final List<String> conversationUsers = new ArrayList<>();
     private String selectedUser = null;
     private JLabel chatHeaderLabel;
     private JLabel chatStatusLabel;
@@ -44,6 +48,8 @@ public class ClientUI extends JFrame {
     private JLabel onlineCountLabel;
     private JScrollPane chatScroll;
     private Map<String, JPanel> chatPanels = new HashMap<>();
+    private final Set<String> loadedHistories = new HashSet<>();
+    private final Set<String> loadingHistories = new HashSet<>();
 
     private AudioHandler audioHandler;
     private VideoHandler videoHandler;
@@ -64,6 +70,11 @@ public class ClientUI extends JFrame {
     private final Color colorMe = UITheme.PRIMARY;
     private final Color colorOther = UITheme.SURFACE_ALT;
     private final Color colorBg = UITheme.BACKGROUND;
+    private static final String REACTION_PREFIX = "reaction:";
+    private static final String[][] REACTIONS = {
+        {"like", "Like"}, {"love", "Love"}, {"laugh", "Haha"},
+        {"wow", "Wow"}, {"sad", "Sad"}, {"angry", "Angry"}
+    };
 
     public ClientUI(String ip, int port, String username, int userId) {
         this(ip, port, username, userId, null, null);
@@ -188,10 +199,11 @@ public class ClientUI extends JFrame {
                 selectedUser = userList.getSelectedValue();
                 if (chatHeaderLabel != null) {
                     chatHeaderLabel.setText(selectedUser);
-                    chatStatusLabel.setText("Online now");
+                    chatStatusLabel.setText(onlineUsers.contains(selectedUser) ? "Online now" : "Offline · saved history");
                     chatAvatarLabel.setText(selectedUser.substring(0, 1).toUpperCase());
                 }
                 switchChatPanel(selectedUser);
+                requestHistory(selectedUser);
             }
         });
 
@@ -433,6 +445,9 @@ public class ClientUI extends JFrame {
                 case USER_LIST:
                     updateUserList((String[]) msg.getContent());
                     break;
+                case CONVERSATION_LIST:
+                    updateConversationList((String[]) msg.getContent());
+                    break;
                 case TEXT:
                     // Plain-text fallback (không mã hóa)
                     addMessageBubble(msg.getSender(), (String) msg.getContent(), false, false, null, false, msg.getSender());
@@ -444,6 +459,9 @@ public class ClientUI extends JFrame {
                 case KEY_RESPONSE:
                     // Server trả lời KEY_REQUEST: lưu vào cache và resolve future
                     handleKeyResponse(msg);
+                    break;
+                case HISTORY_RESPONSE:
+                    handleHistoryResponse(msg);
                     break;
                 case ICON:
                     if (msg.getFileData() != null) {
@@ -469,12 +487,17 @@ public class ClientUI extends JFrame {
                             addMessageBubble(msg.getSender(), "[Failed to load image]", false, false, null, false, msg.getSender());
                         }
                     } else if (msg.getContent() != null) {
-                        // It's a sticker/emoji
-                        addMessageBubble(msg.getSender(), (String) msg.getContent(), false, false, null, true, msg.getSender());
+                        String reaction = (String) msg.getContent();
+                        Icon reactionIcon = getReactionIcon(reaction, 56);
+                        if (reactionIcon != null) {
+                            addMessageBubble(msg.getSender(), "", false, false, reactionIcon, true, msg.getSender());
+                        } else {
+                            addMessageBubble(msg.getSender(), reaction, false, false, null, false, msg.getSender());
+                        }
                     }
                     break;
                 case FILE:
-                    addMessageBubble(msg.getSender(), "📎 " + msg.getFileName() + " (Click to download)", false, false, null, false, msg.getSender());
+                    addMessageBubble(msg.getSender(), "File: " + msg.getFileName() + " (Click to download)", false, false, null, false, msg.getSender());
                     JPanel filePanel = getChatPanelForUser(msg.getSender());
                     Component[] fileComponents = filePanel.getComponents();
                     if(fileComponents.length > 0) {
@@ -494,7 +517,7 @@ public class ClientUI extends JFrame {
                         BufferedImage img = ImageIO.read(new ByteArrayInputStream(msg.getFileData()));
                         stegoIcon = new ImageIcon(img.getScaledInstance(150, 150, Image.SCALE_SMOOTH));
                     } catch (Exception ex) {}
-                    addMessageBubble(msg.getSender(), "🔒 Hidden Stego Image (Click to reveal)", false, true, stegoIcon, false, msg.getSender());
+                    addMessageBubble(msg.getSender(), "Encrypted image (Click to reveal)", false, true, stegoIcon, false, msg.getSender());
                     
                     JPanel stegoPanel = getChatPanelForUser(msg.getSender());
                     Component[] components = stegoPanel.getComponents();
@@ -515,14 +538,14 @@ public class ClientUI extends JFrame {
                 case VOICE_CALL_RES:
                     if ("ACCEPT".equals(msg.getContent())) {
                         audioHandler.startCall(msg.getSender());
-                        addMessageBubble("System", "📞 Voice call connected with " + msg.getSender(), false, false, null, false, msg.getSender());
+                        addMessageBubble("System", "Voice call connected with " + msg.getSender(), false, false, null, false, msg.getSender());
                     } else {
                         addMessageBubble("System", msg.getSender() + " rejected your voice call.", false, false, null, false, msg.getSender());
                     }
                     break;
                 case VOICE_CALL_END:
                     audioHandler.stopCall();
-                    addMessageBubble("System", "📞 Voice call ended by " + msg.getSender(), false, false, null, false, msg.getSender());
+                    addMessageBubble("System", "Voice call ended by " + msg.getSender(), false, false, null, false, msg.getSender());
                     break;
                 case VIDEO_CALL_REQ:
                     handleVideoCallReq(msg);
@@ -530,14 +553,14 @@ public class ClientUI extends JFrame {
                 case VIDEO_CALL_RES:
                     if ("ACCEPT".equals(msg.getContent())) {
                         videoHandler.startCall(msg.getSender());
-                        addMessageBubble("System", "📹 Video call connected with " + msg.getSender(), false, false, null, false, msg.getSender());
+                        addMessageBubble("System", "Video call connected with " + msg.getSender(), false, false, null, false, msg.getSender());
                     } else {
                         addMessageBubble("System", msg.getSender() + " rejected your video call.", false, false, null, false, msg.getSender());
                     }
                     break;
                 case VIDEO_CALL_END:
                     videoHandler.stopCall();
-                    addMessageBubble("System", "📹 Video call ended by " + msg.getSender(), false, false, null, false, msg.getSender());
+                    addMessageBubble("System", "Video call ended by " + msg.getSender(), false, false, null, false, msg.getSender());
                     break;
             }
         });
@@ -557,21 +580,45 @@ public class ClientUI extends JFrame {
         }
         if (prevSelected != null && listModel.contains(prevSelected)) {
             userList.setSelectedValue(prevSelected, true);
+        } else if (!listModel.isEmpty()) {
+            selectedUser = null;
+            // Khi đăng nhập, tự mở conversation đầu tiên và tải lịch sử.
+            userList.setSelectedIndex(0);
         }
+    }
+
+    private void updateConversationList(String[] users) {
+        conversationUsers.clear();
+        if (users != null) {
+            for (String user : users) {
+                if (user != null && !user.equals(client.getUsername())) conversationUsers.add(user);
+            }
+        }
+        filterUserList(txtSearch == null ? "" : txtSearch.getText());
+        if (selectedUser == null && !listModel.isEmpty()) userList.setSelectedIndex(0);
     }
 
     private void filterUserList(String query) {
         if (listModel == null) return;
         String normalized = query == null ? "" : query.trim().toLowerCase();
         listModel.clear();
-        for (String user : onlineUsers) {
+        Set<String> visibleUsers = new LinkedHashSet<>(onlineUsers);
+        visibleUsers.addAll(conversationUsers);
+        for (String user : visibleUsers) {
             if (normalized.isEmpty() || user.toLowerCase().contains(normalized)) {
                 listModel.addElement(user);
             }
         }
     }
 
-    private void addMessageBubble(String sender, String text, boolean isMe, boolean isStego, ImageIcon icon, boolean isSticker, String conversationUser) {
+    private void addMessageBubble(String sender, String text, boolean isMe, boolean isStego,
+                                  Icon icon, boolean isSticker, String conversationUser) {
+        addMessageBubble(sender, text, isMe, isStego, icon, isSticker, conversationUser, null);
+    }
+
+    private void addMessageBubble(String sender, String text, boolean isMe, boolean isStego,
+                                  Icon icon, boolean isSticker, String conversationUser,
+                                  String createdAt) {
         if (conversationUser == null) return;
 
         boolean isSystem = "System".equals(sender);
@@ -661,7 +708,7 @@ public class ClientUI extends JFrame {
 
         if (!isSystem && !isSticker) {
             bubble.add(Box.createRigidArea(new Dimension(0, 4)));
-            String time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
+            String time = formatMessageTime(createdAt);
             JLabel meta = new JLabel((isMe ? "Sent  " : "") + time);
             meta.setFont(new Font("Segoe UI", Font.PLAIN, 9));
             meta.setForeground(isMe ? new Color(255, 255, 255, 190) : UITheme.TEXT_MUTED);
@@ -678,6 +725,13 @@ public class ClientUI extends JFrame {
         targetPanel.repaint();
 
         scrollToBottom(targetPanel);
+    }
+
+    private String formatMessageTime(String createdAt) {
+        if (createdAt != null && createdAt.length() >= 16) {
+            return createdAt.substring(11, 16);
+        }
+        return LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
     }
 
     private void sendText() {
@@ -791,18 +845,144 @@ public class ClientUI extends JFrame {
         }
     }
 
+    private void requestHistory(String peerUsername) {
+        if (peerUsername == null || loadedHistories.contains(peerUsername)
+                || loadingHistories.contains(peerUsername)) return;
+
+        loadingHistories.add(peerUsername);
+        Message request = new Message(
+            Message.MessageType.HISTORY_REQUEST,
+            client.getUsername(),
+            peerUsername
+        );
+        request.setReceiver(peerUsername);
+        client.sendMessage(request);
+    }
+
+    private void handleHistoryResponse(Message response) {
+        String peer = response.getReceiver();
+        if (peer == null) return;
+        loadingHistories.remove(peer);
+
+        if (!(response.getContent() instanceof List<?> rawItems)) return;
+        JPanel panel = getChatPanelForUser(peer);
+        panel.removeAll();
+
+        for (Object raw : rawItems) {
+            if (raw instanceof Message item) renderHistoryItem(item, peer);
+        }
+
+        loadedHistories.add(peer);
+        panel.revalidate();
+        panel.repaint();
+        scrollToBottom(panel);
+    }
+
+    private void renderHistoryItem(Message item, String peer) {
+        boolean isMe = client.getUsername().equals(item.getSender());
+        String senderLabel = isMe ? "Me" : item.getSender();
+        String createdAt = item.getCreatedAt();
+
+        switch (item.getType()) {
+            case ENCRYPTED_TEXT -> decryptAndRenderMessage(item, peer, createdAt);
+            case TEXT -> addMessageBubble(senderLabel, String.valueOf(item.getContent()), isMe,
+                false, null, false, peer, createdAt);
+            case ICON -> {
+                if (item.getFileData() != null) {
+                    ImageIcon image = createScaledImageIcon(item.getFileData(), 200);
+                    addMessageBubble(senderLabel, image == null ? "[Failed to load image]" : "",
+                        isMe, false, image, false, peer, createdAt);
+                } else {
+                    String reaction = item.getContent() == null ? "" : String.valueOf(item.getContent());
+                    Icon icon = getReactionIcon(reaction, 56);
+                    addMessageBubble(senderLabel, icon == null ? reaction : "", isMe,
+                        false, icon, icon != null, peer, createdAt);
+                }
+            }
+            case FILE -> {
+                addMessageBubble(senderLabel, "File: " + item.getFileName() + " (Click to download)",
+                    isMe, false, null, false, peer, createdAt);
+                attachFileDownload(peer, item);
+            }
+            case STEGANOGRAPHY -> {
+                ImageIcon image = createScaledImageIcon(item.getFileData(), 150);
+                addMessageBubble(senderLabel, "Encrypted image (Click to reveal)", isMe,
+                    true, image, false, peer, createdAt);
+                attachStegoReveal(peer, item);
+            }
+            case VOICE_CALL_REQ, VOICE_CALL_RES, VOICE_CALL_END,
+                 VIDEO_CALL_REQ, VIDEO_CALL_RES, VIDEO_CALL_END -> {
+                String text = formatCallHistory(item, isMe) + " · " + formatMessageTime(createdAt);
+                addMessageBubble("System", text, false, false, null, false, peer, createdAt);
+            }
+            default -> {
+                // AUDIO_DATA và VIDEO_DATA không được lưu để tránh DB phình lớn.
+            }
+        }
+    }
+
+    private ImageIcon createScaledImageIcon(byte[] data, int maxWidth) {
+        if (data == null) return null;
+        try {
+            BufferedImage image = ImageIO.read(new ByteArrayInputStream(data));
+            if (image == null) return null;
+            if (image.getWidth() <= maxWidth) return new ImageIcon(image);
+            int height = Math.max(1, image.getHeight() * maxWidth / image.getWidth());
+            return new ImageIcon(image.getScaledInstance(maxWidth, height, Image.SCALE_SMOOTH));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void attachFileDownload(String peer, Message item) {
+        JPanel panel = getChatPanelForUser(peer);
+        if (panel.getComponentCount() == 0) return;
+        Component component = panel.getComponent(panel.getComponentCount() - 1);
+        component.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) { saveFile(item); }
+        });
+        component.setCursor(new Cursor(Cursor.HAND_CURSOR));
+    }
+
+    private void attachStegoReveal(String peer, Message item) {
+        JPanel panel = getChatPanelForUser(peer);
+        if (panel.getComponentCount() == 0) return;
+        Component component = panel.getComponent(panel.getComponentCount() - 1);
+        component.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) { handleIncomingStego(item); }
+        });
+        component.setCursor(new Cursor(Cursor.HAND_CURSOR));
+    }
+
+    private String formatCallHistory(Message item, boolean isMe) {
+        boolean video = item.getType().name().startsWith("VIDEO_");
+        String kind = video ? "Video call" : "Voice call";
+        return switch (item.getType()) {
+            case VOICE_CALL_REQ, VIDEO_CALL_REQ -> isMe
+                ? kind + " started" : "Incoming " + kind.toLowerCase();
+            case VOICE_CALL_RES, VIDEO_CALL_RES -> "ACCEPT".equals(item.getContent())
+                ? kind + " accepted" : kind + " rejected";
+            case VOICE_CALL_END, VIDEO_CALL_END -> kind + " ended";
+            default -> kind;
+        };
+    }
+
     /**
      * Giải mã tin nhắn ENCRYPTED_TEXT nhận được từ socket.
      * Dùng private key trong memory — không cần truy cập DB.
      */
     private void handleIncomingEncryptedMessage(Message msg) {
+        decryptAndRenderMessage(msg, msg.getSender(), null);
+    }
+
+    private void decryptAndRenderMessage(Message msg, String conversationUser, String createdAt) {
         try {
             if (currentUserPrivateKey == null)
                 throw new IllegalStateException("Private key chưa được khởi tạo");
 
             // Là receiver hay sender? Chọn đúng encrypted AES key
-            boolean isReceiver = !msg.getSender().equals(client.getUsername());
-            String encryptedAesKey = isReceiver
+            boolean isMe = msg.getSender().equals(client.getUsername());
+            String encryptedAesKey = !isMe
                 ? msg.getEncryptedAesKeyForReceiver()
                 : msg.getEncryptedAesKeyForSender();
 
@@ -813,44 +993,67 @@ public class ClientUI extends JFrame {
             byte[] iv = AESUtil.fromBase64(msg.getIv());
             String plainText = AESUtil.decrypt(msg.getEncryptedContent(), aesKey, iv);
 
-            addMessageBubble(msg.getSender(), plainText, false, false, null, false, msg.getSender());
+            addMessageBubble(isMe ? "Me" : msg.getSender(), plainText, isMe,
+                false, null, false, conversationUser, createdAt);
         } catch (Exception e) {
             System.err.println("[ClientUI] Cannot decrypt from " + msg.getSender() + ": " + e.getMessage());
-            addMessageBubble(msg.getSender(), "[Tin nhắn mã hóa — không giải mã được]",
-                false, false, null, false, msg.getSender());
+            boolean isMe = msg.getSender().equals(client.getUsername());
+            addMessageBubble(isMe ? "Me" : msg.getSender(), "[Tin nhắn mã hóa — không giải mã được]",
+                isMe, false, null, false, conversationUser, createdAt);
         }
     }
 
-    // New: Show Icon Picker
+    // SVG reactions render consistently across Windows/JDK versions.
     private void showIconPicker(Component parent) {
         JPopupMenu popup = new JPopupMenu();
         popup.setLayout(new GridLayout(2, 3, 5, 5));
-        
-        String[] emojis = {"👍", "❤️", "😂", "😮", "😢", "😡"};
+        popup.setBorder(new EmptyBorder(8, 8, 8, 8));
 
-        for (String emoji : emojis) {
-            JButton btn = new JButton(emoji);
-            btn.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 28));
+        for (String[] reaction : REACTIONS) {
+            String id = reaction[0];
+            JButton btn = new JButton(UITheme.icon("reaction-" + id, 34));
+            btn.setToolTipText(reaction[1]);
+            btn.setPreferredSize(new Dimension(48, 44));
             btn.setContentAreaFilled(false);
             btn.setBorderPainted(false);
             btn.setFocusPainted(false);
             btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
             btn.addActionListener(e -> {
                 popup.setVisible(false);
-                sendEmojiIcon(emoji);
+                sendReaction(id);
             });
             popup.add(btn);
         }
         popup.show(parent, 0, parent.getHeight());
     }
 
-    private void sendEmojiIcon(String emoji) {
+    private void sendReaction(String reactionId) {
         if (selectedUser == null) return;
-        Message msg = new Message(Message.MessageType.ICON, client.getUsername(), emoji);
+        String content = REACTION_PREFIX + reactionId;
+        Message msg = new Message(Message.MessageType.ICON, client.getUsername(), content);
         msg.setReceiver(selectedUser);
         client.sendMessage(msg);
-        
-        addMessageBubble("Me", emoji, true, false, null, true, selectedUser);
+
+        addMessageBubble("Me", "", true, false, getReactionIcon(content, 56), true, selectedUser);
+    }
+
+    private Icon getReactionIcon(String content, int size) {
+        if (content == null) return null;
+        String id = switch (content) {
+            case "👍" -> "like";
+            case "❤", "❤️" -> "love";
+            case "😂" -> "laugh";
+            case "😮" -> "wow";
+            case "😢" -> "sad";
+            case "😡" -> "angry";
+            default -> content.startsWith(REACTION_PREFIX)
+                ? content.substring(REACTION_PREFIX.length()) : null;
+        };
+        if (id == null) return null;
+        for (String[] reaction : REACTIONS) {
+            if (reaction[0].equals(id)) return UITheme.icon("reaction-" + id, size);
+        }
+        return null;
     }
 
     private void sendImage() {
@@ -865,7 +1068,8 @@ public class ClientUI extends JFrame {
             try {
                 byte[] data = Files.readAllBytes(file.toPath());
                 Message msg = new Message(Message.MessageType.ICON, client.getUsername(), null); // Using ICON type for Image
-                msg.setFileData(data); 
+                msg.setFileName(file.getName());
+                msg.setFileData(data);
                 msg.setReceiver(selectedUser);
                 client.sendMessage(msg);
                 
@@ -902,7 +1106,7 @@ public class ClientUI extends JFrame {
                 msg.setReceiver(selectedUser);
                 client.sendMessage(msg);
                 
-                addMessageBubble("Me", "📎 " + file.getName(), true, false, null, false, selectedUser);
+                addMessageBubble("Me", "File: " + file.getName(), true, false, null, false, selectedUser);
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -946,7 +1150,7 @@ public class ClientUI extends JFrame {
                     client.sendMessage(msg);
                     
                     ImageIcon stegoIcon = new ImageIcon(ImageIO.read(file).getScaledInstance(150, 150, Image.SCALE_SMOOTH));
-                    addMessageBubble("Me", "🔒 Hidden Stego Image", true, true, stegoIcon, false, selectedUser);
+                    addMessageBubble("Me", "Encrypted image", true, true, stegoIcon, false, selectedUser);
                 } catch (Exception e) {
                     JOptionPane.showMessageDialog(this, "Error hiding message: " + e.getMessage());
                 }
@@ -975,10 +1179,14 @@ public class ClientUI extends JFrame {
             JOptionPane.showMessageDialog(this, "Select a specific user for Voice Call.");
             return;
         }
+        if (!onlineUsers.contains(selectedUser)) {
+            JOptionPane.showMessageDialog(this, selectedUser + " is offline. Voice call is unavailable.");
+            return;
+        }
         Message msg = new Message(Message.MessageType.VOICE_CALL_REQ, client.getUsername(), null);
         msg.setReceiver(selectedUser);
         client.sendMessage(msg);
-        addMessageBubble("System", "📞 Calling " + selectedUser + "...", true, false, null, false, selectedUser);
+        addMessageBubble("System", "Calling " + selectedUser + "...", true, false, null, false, selectedUser);
     }
 
     private void handleVoiceCallReq(Message msg) {
@@ -989,7 +1197,7 @@ public class ClientUI extends JFrame {
         
         if (res == JOptionPane.YES_OPTION) {
             audioHandler.startCall(msg.getSender());
-            addMessageBubble("System", "📞 Voice call connected with " + msg.getSender(), false, false, null, false, msg.getSender());
+            addMessageBubble("System", "Voice call connected with " + msg.getSender(), false, false, null, false, msg.getSender());
         }
     }
 
@@ -998,10 +1206,14 @@ public class ClientUI extends JFrame {
             JOptionPane.showMessageDialog(this, "Select a specific user for Video Call.");
             return;
         }
+        if (!onlineUsers.contains(selectedUser)) {
+            JOptionPane.showMessageDialog(this, selectedUser + " is offline. Video call is unavailable.");
+            return;
+        }
         Message msg = new Message(Message.MessageType.VIDEO_CALL_REQ, client.getUsername(), null);
         msg.setReceiver(selectedUser);
         client.sendMessage(msg);
-        addMessageBubble("System", "📹 Calling " + selectedUser + "...", true, false, null, false, selectedUser);
+        addMessageBubble("System", "Video calling " + selectedUser + "...", true, false, null, false, selectedUser);
     }
 
     private void handleVideoCallReq(Message msg) {
@@ -1012,7 +1224,7 @@ public class ClientUI extends JFrame {
         
         if (res == JOptionPane.YES_OPTION) {
             videoHandler.startCall(msg.getSender());
-            addMessageBubble("System", "📹 Video call connected with " + msg.getSender(), false, false, null, false, msg.getSender());
+            addMessageBubble("System", "Video call connected with " + msg.getSender(), false, false, null, false, msg.getSender());
         }
     }
 
@@ -1048,9 +1260,10 @@ public class ClientUI extends JFrame {
             JLabel lblName = new JLabel(name);
             lblName.setFont(new Font("Segoe UI", Font.BOLD, 14));
             lblName.setForeground(UITheme.TEXT);
-            JLabel lblState = new JLabel("●  Available to chat");
+            boolean online = onlineUsers.contains(name);
+            JLabel lblState = new JLabel(online ? "●  Online" : "○  Offline · history available");
             lblState.setFont(new Font("Segoe UI", Font.PLAIN, 10));
-            lblState.setForeground(UITheme.SUCCESS);
+            lblState.setForeground(online ? UITheme.SUCCESS : UITheme.TEXT_MUTED);
             text.add(lblName);
             text.add(Box.createRigidArea(new Dimension(0, 2)));
             text.add(lblState);

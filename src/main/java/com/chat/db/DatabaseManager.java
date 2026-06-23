@@ -1,18 +1,24 @@
 package com.chat.db;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.sql.*;
 
 /**
  * Singleton DatabaseManager — chỉ dùng ở SERVER side.
  * Client KHÔNG trực tiếp truy cập DB này.
  *
- * File DB lưu tại thư mục làm việc khi server chạy.
- * Path tuyệt đối để tránh lỗi khi client và server chạy trên cùng máy.
+ * File DB lưu trong thư mục data của project/thư mục chạy server.
  */
 public class DatabaseManager {
 
-    // Đường dẫn tuyệt đối cố định để server và client không bị nhầm lẫn
-    private static final String DB_PATH = System.getProperty("user.home") + "/chat_server.db";
+    private static final Path DATA_DIR = Path.of(System.getProperty("user.dir"), "data")
+        .toAbsolutePath().normalize();
+    private static final Path DB_FILE = DATA_DIR.resolve("chat_server.db");
+    private static final Path LEGACY_DB_FILE = Path.of(System.getProperty("user.home"), "chat_server.db")
+        .toAbsolutePath().normalize();
+    private static final String DB_PATH = DB_FILE.toString();
     private static final String DB_URL  = "jdbc:sqlite:" + DB_PATH;
 
     private static DatabaseManager instance;
@@ -21,6 +27,7 @@ public class DatabaseManager {
     private DatabaseManager() {
         try {
             Class.forName("org.sqlite.JDBC");
+            prepareDatabaseFile();
 
             // Cấu hình connection properties
             java.util.Properties props = new java.util.Properties();
@@ -41,6 +48,18 @@ public class DatabaseManager {
 
         } catch (Exception e) {
             throw new RuntimeException("Cannot connect to SQLite database: " + DB_PATH, e);
+        }
+    }
+
+    /**
+     * Tạo thư mục data và tự sao chép DB cũ từ user.home trong lần chạy đầu tiên.
+     * File cũ được giữ lại như một bản dự phòng.
+     */
+    private void prepareDatabaseFile() throws Exception {
+        Files.createDirectories(DATA_DIR);
+        if (!Files.exists(DB_FILE) && Files.isRegularFile(LEGACY_DB_FILE)) {
+            Files.copy(LEGACY_DB_FILE, DB_FILE, StandardCopyOption.COPY_ATTRIBUTES);
+            System.out.println("[DB] Migrated legacy database from: " + LEGACY_DB_FILE);
         }
     }
 
@@ -98,6 +117,26 @@ public class DatabaseManager {
                 "    FOREIGN KEY (message_id) REFERENCES messages(id)," +
                 "    FOREIGN KEY (user_id)    REFERENCES users(id)" +
                 ")"
+            );
+
+            // --- Nội dung không phải encrypted text và lịch sử cuộc gọi ---
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS conversation_items (" +
+                "    id           INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "    sender_id    INTEGER NOT NULL," +
+                "    receiver_id  INTEGER NOT NULL," +
+                "    item_type    TEXT NOT NULL," +
+                "    content_text TEXT," +
+                "    file_name    TEXT," +
+                "    file_data    BLOB," +
+                "    created_at   TEXT DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW'))," +
+                "    FOREIGN KEY (sender_id)   REFERENCES users(id)," +
+                "    FOREIGN KEY (receiver_id) REFERENCES users(id)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversation_items_pair_time " +
+                "ON conversation_items(sender_id, receiver_id, created_at)"
             );
         }
     }

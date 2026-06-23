@@ -1,6 +1,8 @@
 package com.chat.db;
 
 import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * DAO xử lý CRUD cho bảng users.
@@ -88,6 +90,36 @@ public class UserDAO {
             System.err.println("[UserDAO] getPrivateKey error: " + e.getMessage());
         }
         return null;
+    }
+
+    /** Danh sách những user đã từng có nội dung hội thoại với current user. */
+    public String[] getConversationUsernames(int currentUserId) {
+        List<String> users = new ArrayList<>();
+        String sql = """
+            SELECT username
+            FROM users
+            WHERE id IN (
+                SELECT CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END
+                FROM messages
+                WHERE sender_id = ? OR receiver_id = ?
+                UNION
+                SELECT CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END
+                FROM conversation_items
+                WHERE sender_id = ? OR receiver_id = ?
+            )
+            ORDER BY username COLLATE NOCASE
+            """;
+        synchronized (conn) {
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                for (int i = 1; i <= 6; i++) ps.setInt(i, currentUserId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) users.add(rs.getString("username"));
+                }
+            } catch (SQLException e) {
+                System.err.println("[UserDAO] getConversationUsernames error: " + e.getMessage());
+            }
+        }
+        return users.toArray(new String[0]);
     }
 
     /**

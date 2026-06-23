@@ -3,10 +3,10 @@ package com.chat.common;
 import java.io.Serializable;
 
 public class Message implements Serializable {
-    private static final long serialVersionUID = 3L;
+    private static final long serialVersionUID = 4L;
 
     public enum MessageType {
-        CONNECT, DISCONNECT, USER_LIST,
+        CONNECT, DISCONNECT, USER_LIST, CONVERSATION_LIST,
         TEXT, ICON, FILE,
         VOICE_CALL_REQ, VOICE_CALL_RES, VOICE_CALL_END, AUDIO_DATA,
         VIDEO_CALL_REQ, VIDEO_CALL_RES, VIDEO_CALL_END, VIDEO_DATA,
@@ -16,6 +16,8 @@ public class Message implements Serializable {
         // Key Exchange — client request public key của user khác từ server
         KEY_REQUEST,   // client → server: content = username cần lấy key
         KEY_RESPONSE,  // server → client: content = publicKeyBase64, sender = username
+        HISTORY_REQUEST,
+        HISTORY_RESPONSE,
         // Authentication — client xác thực qua server (không trực tiếp vào DB)
         LOGIN,
         LOGIN_OK,
@@ -46,6 +48,8 @@ public class Message implements Serializable {
     private int senderId;
     /** Numeric ID của receiver. */
     private int receiverId;
+    /** Timestamp lấy từ DB khi server trả lịch sử. */
+    private String createdAt;
     // ───────────────────────────────────────────────────────────────────────
 
     public Message(MessageType type, String sender, Object content) {
@@ -91,4 +95,7 @@ public class Message implements Serializable {
 
     public int getReceiverId() { return receiverId; }
     public void setReceiverId(int receiverId) { this.receiverId = receiverId; }
+
+    public String getCreatedAt() { return createdAt; }
+    public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }
 }

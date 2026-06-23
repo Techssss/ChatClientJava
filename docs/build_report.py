@@ -201,7 +201,7 @@ def generate_architecture():
             (1320, 615, 1640, 710, "DAO layer", "UserDAO / MessageDAO"),
         ], "#FFF7ED"),
         (100, 780, 1700, 980, "DATA & EXTERNAL RESOURCES", [
-            (180, 845, 540, 945, "SQLite", "users / messages / message_keys"),
+            (180, 845, 540, 945, "SQLite", "users / messages / keys / items"),
             (720, 845, 1080, 945, "Thiết bị", "Microphone / speaker / webcam"),
             (1260, 845, 1620, 945, "Vosk model", "Nhận dạng giọng nói offline"),
         ], "#F9FAFB"),
@@ -300,8 +300,8 @@ def generate_message_sequence():
     ]
     for args in steps:
         seq_msg(g, x, *args)
-    g.d.text((950, 1385), "Lưu ý hiện trạng: receiverId cần được server ánh xạ từ username trước khi persist.",
-             font=g.small_font, fill="#C0392B", anchor="mm")
+    g.d.text((950, 1385), "Server ánh xạ sender/receiver username sang ID thật trước khi persist.",
+             font=g.small_font, fill="#168A63", anchor="mm")
     return g.save("05-message-sequence.png")
 
 
@@ -376,9 +376,9 @@ def generate_class_diagram():
               ["Serializable", "getters / setters"])
     class_box(g, boxes["Crypto"], "Crypto utilities", ["AESUtil", "RSAUtil", "KeyManager"],
               ["AES-256-GCM", "RSA-2048 OAEP", "Base64 serialization"], fill="#ECFDF3")
-    class_box(g, boxes["DAO"], "DAO layer", ["UserDAO", "MessageDAO", "CryptoMessageService"],
-              ["create/find user", "save/query ciphertext", "decrypt history"], fill="#FFF7ED")
-    class_box(g, boxes["Database"], "DatabaseManager", ["Singleton Connection", "DB_PATH=user.home"],
+    class_box(g, boxes["DAO"], "DAO layer", ["UserDAO", "MessageDAO", "ConversationItemDAO"],
+              ["create/find user", "ciphertext + attachments", "query history"], fill="#FFF7ED")
+    class_box(g, boxes["Database"], "DatabaseManager", ["Singleton Connection", "DB_PATH=data/"],
               ["+ getInstance()", "- initSchema()"], fill="#F4F6F9")
     links = [
         ("LoginUI", "ClientUI", "tạo"), ("ClientUI", "ChatClient", "sử dụng"),
@@ -410,20 +410,24 @@ def erd_table(g, xy, name, rows):
 
 def generate_erd():
     g = Diagram(1800, 1080, "BIỂU ĐỒ THỰC THỂ - QUAN HỆ (ERD)")
-    erd_table(g, (90, 180, 620, 650), "users", [
+    erd_table(g, (50, 160, 540, 620), "users", [
         ("PK", "id INTEGER"), ("", "username TEXT UNIQUE"), ("", "password_hash TEXT"),
         ("", "public_key TEXT"), ("", "private_key TEXT"), ("", "created_at DATETIME")])
-    erd_table(g, (720, 180, 1250, 610), "messages", [
+    erd_table(g, (650, 160, 1140, 590), "messages", [
         ("PK", "id INTEGER"), ("FK", "sender_id -> users.id"), ("FK", "receiver_id -> users.id"),
         ("", "encrypted_content TEXT"), ("", "iv TEXT"), ("", "created_at DATETIME")])
-    erd_table(g, (1180, 700, 1710, 1010), "message_keys", [
+    erd_table(g, (1230, 160, 1750, 510), "message_keys", [
         ("PK", "id INTEGER"), ("FK", "message_id -> messages.id"),
         ("FK", "user_id -> users.id"), ("", "encrypted_aes_key TEXT")])
-    g.arrow((620, 310), (720, 310), "1 - N sender", color="#5B6CFF")
-    g.arrow((620, 480), (720, 480), "1 - N receiver", color="#5B6CFF")
-    g.arrow((1110, 610), (1350, 700), "1 - N", color="#20B57E")
-    g.arrow((620, 590), (1180, 850), "1 - N user", color="#B7791F")
-    g.d.text((900, 920), "Mỗi message có hai encrypted AES key: một cho sender và một cho receiver.",
+    erd_table(g, (500, 680, 1500, 1015), "conversation_items", [
+        ("PK", "id INTEGER"), ("FK", "sender_id / receiver_id -> users.id"),
+        ("", "item_type TEXT"), ("", "content_text TEXT"),
+        ("", "file_name TEXT"), ("", "file_data BLOB"), ("", "created_at TEXT")])
+    g.arrow((540, 300), (650, 300), "1 - N sender", color="#5B6CFF")
+    g.arrow((540, 470), (650, 470), "1 - N receiver", color="#5B6CFF")
+    g.arrow((1140, 300), (1230, 300), "1 - N key", color="#20B57E")
+    g.arrow((440, 590), (650, 680), "1 - N attachment/call", color="#B7791F")
+    g.d.text((900, 1045), "Encrypted text tách khỏi attachment/call log; mỗi text có hai RSA-encrypted AES key.",
              font=g.small_font, fill="#667085", anchor="mm")
     return g.save("08-erd.png")
 
@@ -434,7 +438,7 @@ def generate_deployment():
           fill="#EEF2FF", outline="#5B6CFF")
     g.box((980, 150, 1720, 900), "Máy B - Client", ["Windows + JDK", "LoginUI / ClientUI", "Nhập IPv4 Wi-Fi của Máy A"],
           fill="#ECFDF3", outline="#20B57E")
-    g.box((160, 390, 740, 540), "SQLite", ["C:/Users/<user>/chat_server.db", "Chỉ server truy cập"], fill="white", outline="#667085", center=True)
+    g.box((160, 390, 740, 540), "SQLite", ["<project>/data/chat_server.db", "Chỉ server truy cập"], fill="white", outline="#667085", center=True)
     g.box((160, 620, 740, 790), "Thiết bị tùy chọn", ["Microphone, speaker, webcam", "Vosk model"], fill="white", outline="#667085", center=True)
     g.box((1060, 390, 1640, 540), "Client runtime", ["Socket TCP + Object streams", "UI Swing / FlatLaf"], fill="white", outline="#667085", center=True)
     g.box((1060, 620, 1640, 790), "Thiết bị tùy chọn", ["Microphone, speaker, webcam", "Vosk model"], fill="white", outline="#667085", center=True)
@@ -950,7 +954,7 @@ def add_abstract(doc):
         "Kết quả kiểm thử cho thấy dự án biên dịch thành công bằng Maven, luồng đăng ký và đăng nhập phân biệt rõ bốn "
         "trường hợp: đăng ký mới, đăng nhập đúng, đăng nhập sai mật khẩu và đăng ký trùng. Sản phẩm đáp ứng tốt mục tiêu "
         "minh họa socket đa luồng, giao diện desktop, mã hóa lai và tích hợp thiết bị. Báo cáo cũng chỉ ra các giới hạn "
-        "cần hoàn thiện trước khi triển khai thực tế, gồm tải lại lịch sử chat, ánh xạ receiverId khi lưu tin, bảo vệ khóa "
+        "cần hoàn thiện trước khi triển khai thực tế, gồm phân trang lịch sử lớn, bảo vệ khóa "
         "riêng, kiểm soát kích thước dữ liệu và thay Java serialization bằng protocol an toàn hơn.")
     add_callout(doc, "Từ khóa", "Java Swing; TCP Socket; SQLite; AES-GCM; RSA-OAEP; Vosk; Webcam; Client-Server.")
 
@@ -1114,6 +1118,7 @@ def chapter_4(doc):
         ("Kết nối", "CONNECT, DISCONNECT, USER_LIST"),
         ("Nội dung", "TEXT, ENCRYPTED_TEXT, ICON, FILE, STEGANOGRAPHY"),
         ("Trao đổi khóa", "KEY_REQUEST, KEY_RESPONSE"),
+        ("Lịch sử", "CONVERSATION_LIST, HISTORY_REQUEST, HISTORY_RESPONSE"),
         ("Voice", "VOICE_CALL_REQ, VOICE_CALL_RES, VOICE_CALL_END, AUDIO_DATA"),
         ("Video", "VIDEO_CALL_REQ, VIDEO_CALL_RES, VIDEO_CALL_END, VIDEO_DATA"),
     ]
@@ -1121,21 +1126,24 @@ def chapter_4(doc):
 
     add_heading(doc, "4.3. Thiết kế cơ sở dữ liệu", 2)
     add_para(doc,
-        "SQLite được đặt tại user.home/chat_server.db để server và client không nhầm file khi chạy từ các working directory "
-        "khác nhau. Schema gồm users, messages và message_keys. users lưu định danh, password hash và RSA key pair. "
-        "messages lưu ciphertext cùng IV. message_keys lưu encrypted AES key theo từng user được phép đọc một message.")
+        "SQLite được đặt tại data/chat_server.db trong thư mục chạy server để dễ kiểm tra, sao lưu và bàn giao. "
+        "Schema gồm users, messages, message_keys và conversation_items. users lưu định danh, password hash và RSA key pair; "
+        "messages lưu ciphertext cùng IV; message_keys lưu encrypted AES key theo từng user; conversation_items lưu reaction, "
+        "ảnh, file, steganography và sự kiện cuộc gọi. Audio/video stream không được ghi vào DB.")
     add_figure(doc, DIAGRAMS / "08-erd.png", "Hình 4.2. Biểu đồ ERD của cơ sở dữ liệu SQLite")
     db_rows = [
         ("users", "id", "username, password_hash, public_key, private_key, created_at", "Tài khoản và key pair"),
         ("messages", "id", "sender_id, receiver_id, encrypted_content, iv, created_at", "Ciphertext từng tin"),
         ("message_keys", "id", "message_id, user_id, encrypted_aes_key", "Khóa AES mã hóa theo user"),
+        ("conversation_items", "id", "sender_id, receiver_id, item_type, content_text, file_name, file_data", "Attachment và call log"),
     ]
     add_table(doc, ["Bảng", "Khóa chính", "Thuộc tính", "Ý nghĩa"], db_rows,
               [1300, 1200, 4500, 2072], "Bảng 4.3. Mô tả lược đồ dữ liệu")
-    add_callout(doc, "Điểm cần hoàn thiện",
-        "Client hiện đặt receiverId = -1 khi gửi ENCRYPTED_TEXT trong khi ClientHandler chưa ánh xạ username thành id trước "
-        "khi INSERT. Vì foreign key được bật, persistence lịch sử có thể thất bại dù tin vẫn được forward thời gian thực.",
-        fill="FEF3F2", accent=RED)
+    add_callout(doc, "Cơ chế persistence",
+        "Client chỉ gửi username người nhận; ClientHandler không tin ID từ client mà tự tra sender và receiver trong bảng users, "
+        "gán ID thật rồi mới lưu ciphertext, IV và hai encrypted AES key. Smoke test xác nhận messages có một dòng và "
+        "message_keys có đúng hai dòng cho mỗi tin.",
+        fill="ECFDF3", accent=TEAL)
 
     add_heading(doc, "4.4. Thiết kế bảo mật", 2)
     for item in [
@@ -1180,9 +1188,10 @@ def chapter_5(doc):
 
     add_heading(doc, "5.3. Giao diện chat", 2)
     add_para(doc,
-        "ClientUI gồm sidebar tài khoản hiện tại, tìm kiếm hội thoại và danh sách online; header hiển thị người đang chat cùng "
+        "ClientUI gồm sidebar tài khoản hiện tại, tìm kiếm hội thoại, danh sách online và các hội thoại cũ; header hiển thị người đang chat cùng "
         "nút voice/video; vùng giữa chứa message bubble; composer có icon SVG cho sticker, ảnh, file, steganography và STT. "
-        "Mỗi người dùng có một chat panel riêng được cache trong Map để chuyển hội thoại nhanh.")
+        "Mỗi người dùng có một chat panel riêng được cache trong Map. Khi chọn conversation lần đầu, client gửi HISTORY_REQUEST, "
+        "giải mã lại encrypted text và dựng lại attachment/call log từ HISTORY_RESPONSE.")
     add_figure(doc, SCREENS / "chat.png", "Hình 5.2. Giao diện chat với icon SVG và bubble mã hóa", width=5.85)
 
     add_heading(doc, "5.4. Gửi tin nhắn, ảnh và tệp", 2)
@@ -1231,7 +1240,7 @@ def chapter_6(doc):
         ("TC-06", "Account không có", "Username mới ở Sign in", "LOGIN_FAIL", "Đạt"),
         ("TC-07", "Danh sách online", "Hai client CONNECT", "USER_LIST cập nhật", "Đạt thủ công"),
         ("TC-08", "Chat text", "Hai user online", "Forward và decrypt", "Đạt thủ công"),
-        ("TC-09", "Persistence", "ENCRYPTED_TEXT", "Cần resolve receiverId", "Chưa hoàn thiện"),
+        ("TC-09", "Persistence", "ENCRYPTED_TEXT", "Resolve ID và lưu 2 key", "Đạt smoke test"),
         ("TC-10", "Gửi ảnh / file", "File hợp lệ", "Nhận và lưu", "Đạt thủ công"),
         ("TC-11", "Voice call", "Có microphone/speaker", "Audio hai chiều", "Cần thiết bị"),
         ("TC-12", "Video call", "Có webcam", "Video + audio", "Cần thiết bị"),
@@ -1251,8 +1260,8 @@ def chapter_6(doc):
         add_bullet(doc, item)
     add_heading(doc, "6.4. Hạn chế và rủi ro", 2)
     risks = [
-        ("R-01", "receiverId = -1 làm persistence message thất bại", "Cao", "Server lookup UserRecord theo receiver username trước INSERT."),
-        ("R-02", "UI chưa tải lịch sử chat từ DB", "Cao", "Bổ sung HISTORY_REQUEST/HISTORY_RESPONSE và decrypt client-side."),
+        ("R-01", "CONNECT username chưa ràng buộc chặt với phiên xác thực", "Cao", "Phát session token sau LOGIN và xác minh token khi CONNECT."),
+        ("R-02", "BLOB file lớn làm SQLite tăng nhanh", "Cao", "Giới hạn 16 MB/item; production chuyển object storage và chunked upload."),
         ("R-03", "Private key lưu rõ tại server", "Cao", "Mã hóa private key bằng khóa dẫn xuất từ password; không gửi qua socket rõ."),
         ("R-04", "Java ObjectInputStream với input không tin cậy", "Cao", "Chuyển sang JSON/Protobuf và whitelist schema."),
         ("R-05", "Transport chưa TLS", "Cao", "Dùng SSLSocket hoặc TLS termination."),
@@ -1325,7 +1334,7 @@ def chapter_8(doc):
         "Các hạn chế được ghi nhận trung thực tạo cơ sở cho vòng phát triển tiếp theo thay vì che giấu rủi ro kỹ thuật.")
     add_heading(doc, "8.2. Hướng phát triển", 2)
     roadmap = [
-        ("Giai đoạn 1", "Hoàn thiện receiverId, history API, load/decrypt hội thoại và trạng thái đã đọc."),
+        ("Giai đoạn 1", "Phân trang lịch sử, tìm kiếm nội dung cục bộ và trạng thái đã đọc."),
         ("Giai đoạn 2", "TLS, BCrypt/Argon2id, mã hóa private key, session token và chống giả mạo CONNECT."),
         ("Giai đoạn 3", "Protocol JSON/Protobuf, message queue, chunked upload, giới hạn dữ liệu và retry."),
         ("Giai đoạn 4", "Group chat, contact, offline message, notification, search nội dung cục bộ."),
@@ -1334,7 +1343,7 @@ def chapter_8(doc):
     ]
     add_table(doc, ["Giai đoạn", "Nội dung"], roadmap, [1800, 7272], "Bảng 8.1. Roadmap đề xuất")
     add_callout(doc, "Định hướng ưu tiên",
-        "Ưu tiên sửa persistence và security boundary trước khi bổ sung thêm chức năng. Một hệ thống ít tính năng nhưng bảo "
+        "Ưu tiên phân trang history và hoàn thiện security boundary trước khi bổ sung thêm chức năng. Một hệ thống ít tính năng nhưng bảo "
         "toàn dữ liệu đúng sẽ có giá trị hơn một hệ thống nhiều tính năng nhưng không khôi phục được lịch sử hoặc bảo vệ key.",
         fill="ECFDF3", accent=TEAL)
 
@@ -1373,6 +1382,7 @@ def appendices(doc):
         "├── crypto/   AESUtil, RSAUtil, KeyManager\n"
         "│             CryptoMessageService\n"
         "└── db/       DatabaseManager, UserDAO, MessageDAO\n"
+        "              ConversationItemDAO\n"
         "src/main/resources/icons/   SVG icons\n"
         "model/                       Vosk model")
     add_heading(doc, "Phụ lục B. DDL SQLite", 2)
@@ -1395,11 +1405,18 @@ def appendices(doc):
         "  message_id INTEGER NOT NULL, user_id INTEGER NOT NULL,\n"
         "  encrypted_aes_key TEXT NOT NULL,\n"
         "  FOREIGN KEY(message_id) REFERENCES messages(id),\n"
-        "  FOREIGN KEY(user_id) REFERENCES users(id));")
+        "  FOREIGN KEY(user_id) REFERENCES users(id));\n\n"
+        "CREATE TABLE conversation_items (\n"
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+        "  sender_id INTEGER NOT NULL, receiver_id INTEGER NOT NULL,\n"
+        "  item_type TEXT NOT NULL, content_text TEXT,\n"
+        "  file_name TEXT, file_data BLOB, created_at TEXT,\n"
+        "  FOREIGN KEY(sender_id) REFERENCES users(id),\n"
+        "  FOREIGN KEY(receiver_id) REFERENCES users(id));")
     add_heading(doc, "Phụ lục C. Tham số cấu hình chính", 2)
     config_rows = [
         ("Server port", "5000", "ServerUI / LoginUI"),
-        ("DB path", "${user.home}/chat_server.db", "DatabaseManager"),
+        ("DB path", "${user.dir}/data/chat_server.db", "DatabaseManager"),
         ("AES", "256-bit, GCM, IV 12 byte", "AESUtil"),
         ("RSA", "2048-bit, OAEP SHA-256", "RSAUtil"),
         ("Audio", "8 kHz, 16 bit, mono", "AudioHandler / VideoHandler"),

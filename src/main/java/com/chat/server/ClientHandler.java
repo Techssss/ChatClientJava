@@ -2,7 +2,10 @@ package com.chat.server;
 
 import com.chat.common.Message;
 import com.chat.crypto.RSAUtil;
+import com.chat.db.ConversationItemDAO;
+import com.chat.db.ConversationItemDAO.ConversationItemRecord;
 import com.chat.db.MessageDAO;
+import com.chat.db.MessageDAO.EncryptedMessageRecord;
 import com.chat.db.UserDAO;
 import com.chat.db.UserDAO.UserRecord;
 
@@ -11,7 +14,9 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.security.KeyPair;
-import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 /**
  * Xử lý kết nối của một client.
@@ -31,6 +36,7 @@ public class ClientHandler extends Thread {
     private String username;
 
     private final MessageDAO messageDAO = new MessageDAO();
+    private final ConversationItemDAO conversationItemDAO = new ConversationItemDAO();
     private final UserDAO    userDAO    = new UserDAO();
 
     public ClientHandler(Socket socket, ChatServer server) {
@@ -57,6 +63,7 @@ public class ClientHandler extends Thread {
                 } else if (msg.getType() == Message.MessageType.CONNECT) {
                     username = msg.getSender();
                     server.addClient(username, this);
+                    sendConversationList();
                     break; // Vào vòng lặp chính
 
                 } else {
@@ -85,17 +92,26 @@ public class ClientHandler extends Thread {
     private void handleMessage(Message msg) {
         String receiver = msg.getReceiver();
         if (receiver == null || receiver.equals("All")) return; // chỉ hỗ trợ private
+        msg.setSender(username); // không cho client giả mạo sender
 
         switch (msg.getType()) {
             case ENCRYPTED_TEXT  -> persistEncryptedMessage(msg);
-            case KEY_REQUEST     -> handleKeyRequest(msg);
+            case KEY_REQUEST     -> {
+                handleKeyRequest(msg);
+                return;
+            }
+            case HISTORY_REQUEST -> {
+                handleHistoryRequest(msg);
+                return;
+            }
+            case TEXT, ICON, FILE, STEGANOGRAPHY,
+                 VOICE_CALL_REQ, VOICE_CALL_RES, VOICE_CALL_END,
+                 VIDEO_CALL_REQ, VIDEO_CALL_RES, VIDEO_CALL_END -> persistConversationItem(msg);
             default              -> {} // các loại khác (voice/video/file...) chỉ forward
         }
 
         // Forward tới receiver
-        if (msg.getType() != Message.MessageType.KEY_REQUEST) {
-            server.sendToUser(receiver, msg);
-        }
+        server.sendToUser(receiver, msg);
     }
 
     /** Xử lý đăng nhập hoặc đăng ký tách biệt. Content: "username:passwordHash". */
@@ -177,14 +193,107 @@ public class ClientHandler extends Thread {
         sendToSelf(resp);
     }
 
+    private void sendConversationList() {
+        UserRecord current = userDAO.findByUsername(username);
+        if (current == null) return;
+        Message response = new Message(
+            Message.MessageType.CONVERSATION_LIST,
+            "Server",
+            userDAO.getConversationUsernames(current.id())
+        );
+        sendToSelf(response);
+    }
+
+    private void handleHistoryRequest(Message msg) {
+        UserRecord current = userDAO.findByUsername(username);
+        UserRecord other = userDAO.findByUsername(msg.getReceiver());
+        if (current == null || other == null) {
+            server.getUi().log("[WARN] HISTORY_REQUEST user not found: "
+                + username + " <-> " + msg.getReceiver());
+            return;
+        }
+
+        List<Message> history = new ArrayList<>();
+        for (EncryptedMessageRecord record : messageDAO.getMessages(current.id(), other.id())) {
+            Message item = new Message(Message.MessageType.ENCRYPTED_TEXT, record.senderUsername(), null);
+            item.setReceiver(record.receiverUsername());
+            item.setSenderId(record.senderId());
+            item.setReceiverId(record.receiverId());
+            item.setEncryptedContent(record.encryptedContent());
+            item.setIv(record.ivB64());
+            item.setCreatedAt(record.createdAt());
+            if (record.senderId() == current.id()) {
+                item.setEncryptedAesKeyForSender(record.encryptedAesKey());
+            } else {
+                item.setEncryptedAesKeyForReceiver(record.encryptedAesKey());
+            }
+            history.add(item);
+        }
+
+        for (ConversationItemRecord record : conversationItemDAO.getItems(current.id(), other.id())) {
+            Message item = new Message(record.type(), record.senderUsername(), record.contentText());
+            item.setReceiver(record.receiverUsername());
+            item.setSenderId(record.senderId());
+            item.setReceiverId(record.receiverId());
+            item.setFileName(record.fileName());
+            item.setFileData(record.fileData());
+            item.setCreatedAt(record.createdAt());
+            history.add(item);
+        }
+
+        history.sort(Comparator.comparing(
+            item -> item.getCreatedAt() == null ? "" : item.getCreatedAt()
+        ));
+
+        Message response = new Message(
+            Message.MessageType.HISTORY_RESPONSE,
+            "Server",
+            new ArrayList<>(history)
+        );
+        response.setReceiver(other.username()); // peer mà client đang mở
+        sendToSelf(response);
+    }
+
+    private void persistConversationItem(Message msg) {
+        UserRecord senderRecord = userDAO.findByUsername(username);
+        UserRecord receiverRecord = userDAO.findByUsername(msg.getReceiver());
+        if (senderRecord == null || receiverRecord == null) {
+            server.getUi().log("[WARN] Could not resolve conversation item users: "
+                + username + " -> " + msg.getReceiver());
+            return;
+        }
+
+        msg.setSenderId(senderRecord.id());
+        msg.setReceiverId(receiverRecord.id());
+        int itemId = conversationItemDAO.saveItem(senderRecord.id(), receiverRecord.id(), msg);
+        if (itemId == -1) {
+            server.getUi().log("[WARN] Could not persist " + msg.getType()
+                + " for " + username + " -> " + msg.getReceiver());
+        }
+    }
+
     /**
      * Lưu tin nhắn đã mã hóa vào SQLite.
      * Server không thấy plain text — chỉ lưu ciphertext + IV + encrypted AES keys.
      */
     private void persistEncryptedMessage(Message msg) {
         try {
+            UserRecord senderRecord = userDAO.findByUsername(username);
+            UserRecord receiverRecord = userDAO.findByUsername(msg.getReceiver());
+            if (senderRecord == null || receiverRecord == null) {
+                server.getUi().log("[WARN] Could not resolve users for encrypted message: "
+                    + username + " -> " + msg.getReceiver());
+                return;
+            }
+
+            // Không tin senderId/receiverId do client gửi lên. Server tự ánh xạ
+            // username của connection và receiver sang ID thật trong database.
+            msg.setSender(username);
+            msg.setSenderId(senderRecord.id());
+            msg.setReceiverId(receiverRecord.id());
+
             int messageId = messageDAO.saveMessage(
-                msg.getSenderId(), msg.getReceiverId(),
+                senderRecord.id(), receiverRecord.id(),
                 msg.getEncryptedContent(), msg.getIv()
             );
             if (messageId == -1) {
@@ -192,9 +301,12 @@ public class ClientHandler extends Thread {
                 return;
             }
             if (msg.getEncryptedAesKeyForReceiver() != null)
-                messageDAO.saveMessageKey(messageId, msg.getReceiverId(), msg.getEncryptedAesKeyForReceiver());
+                messageDAO.saveMessageKey(messageId, receiverRecord.id(), msg.getEncryptedAesKeyForReceiver());
             if (msg.getEncryptedAesKeyForSender() != null)
-                messageDAO.saveMessageKey(messageId, msg.getSenderId(), msg.getEncryptedAesKeyForSender());
+                messageDAO.saveMessageKey(messageId, senderRecord.id(), msg.getEncryptedAesKeyForSender());
+
+            server.getUi().log("[DB] Encrypted message saved: id=" + messageId
+                + ", " + username + " -> " + msg.getReceiver());
 
         } catch (Exception e) {
             server.getUi().log("[ERROR] Failed to persist message: " + e.getMessage());
